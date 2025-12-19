@@ -57,11 +57,16 @@
     .extra-fields { margin-top:30px; padding:20px; background:#f9f9f9; border-radius:8px; }
     .extra-fields textarea { width:100%; height:80px; padding:10px; border:1px solid #ddd; border-radius:4px; resize:vertical; box-sizing:border-box; }
 
+    /* მცირე "მცოდნე" ინდიკატორი (არ არის სავალდებულო, მაგრამ გეხმარება) */
+    .statusline { text-align:center; color:#666; font-size:12px; margin-top:-10px; }
+    .statusdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:#4CAF50; vertical-align:middle; }
+
     @media print {
       .controls, .extra-fields, #authView, #calendarView { display:none !important; }
       #tableView { display:block !important; }
       .table-container { box-shadow:none; padding:0; }
       .page-wrapper { padding:0; }
+      .statusline { display:none !important; }
     }
   </style>
 </head>
@@ -71,7 +76,8 @@
 
     <!-- პაროლის შესვლა + ლოგო -->
     <div id="authView">
-      <img src="logo.png" alt="ლოგო" id="logo">
+      <!-- ✅ ლოგო: ატვირთე იგივე რეპოში tm_center_logo.png -->
+      <img src="tm_center_logo.png" alt="TM Center Logo" id="logo">
       <h2>შესვლა</h2>
       <input type="password" id="password" placeholder="პაროლი">
       <button class="btn btn-nav" id="loginBtn" type="button">შესვლა</button>
@@ -98,6 +104,13 @@
       <div class="header">
         <h1>ინფექციურ-კლინიკური დეპარტამენტი</h1>
         <h2>Inpatients turnover - <span id="selectedDate">--.--.--</span></h2>
+      </div>
+
+      <!-- ✅ იდეა: "დაყოვნების" გარეშე — ცხრილი მაშინვე ჩანს default-ით, ხოლო Firestore-დან რომ მოვა,
+           რეალურ მონაცემებზე გადაეწერება (თუ არსებობს). -->
+      <div class="statusline" id="statusLine">
+        <span class="statusdot" id="statusDot"></span>
+        <span id="statusText">მზადაა</span>
       </div>
 
       <div class="controls">
@@ -157,7 +170,7 @@
     }
 
     // =========================
-    // Default rows
+    // Default rows (მაშინვე გამოსაჩენად)
     // =========================
     const defaultData = [
       {dept:"ზრდასრულთა ემერჯენსი", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
@@ -194,7 +207,7 @@
     // State
     // =========================
     let currentData = [];
-    let selectedDate = new Date(2025, 11, 19); // 19.12.2025
+    let selectedDate = new Date(2025, 11, 19);
     let currentYear = 2025;
 
     let isAdmin = false;
@@ -203,6 +216,20 @@
     let sortDirection = {};
     let pendingSaveTimer = null;
     let isSaving = false;
+
+    // =========================
+    // UI status helper
+    // =========================
+    function setStatus(kind, text) {
+      const dot = document.getElementById('statusDot');
+      const label = document.getElementById('statusText');
+      label.textContent = text;
+
+      // kind: ok / loading / warn
+      if (kind === 'loading') dot.style.background = '#FF9800';
+      else if (kind === 'warn') dot.style.background = '#F44336';
+      else dot.style.background = '#4CAF50';
+    }
 
     // =========================
     // Helpers
@@ -248,64 +275,95 @@
     }
 
     // =========================
-    // Firestore
+    // INSTANT TABLE: show default immediately, then merge Firestore data
     // =========================
-    async function loadAllData() {
-      const docId = getDocId(selectedDate);
-
-      // fallback
-      let data = { rows: deepClone(defaultData), responsible:'', urgent:'', locked:false };
-
-      if (db) {
-        try {
-          const doc = await db.collection('dailyData').doc(docId).get();
-          if (doc.exists) {
-            const d = doc.data() || {};
-            data.rows = Array.isArray(d.rows) ? d.rows : deepClone(defaultData);
-            data.responsible = d.responsible || '';
-            data.urgent = d.urgent || '';
-            data.locked = !!d.locked;
-          }
-        } catch (e) {
-          console.warn('Load error:', e);
-        }
-      }
-
-      // normalize rows + compute final always
-      currentData = (data.rows || []).map(r => {
-        const row = {
-          dept: r.dept ?? '',
-          initial: +r.initial || 0,
-          admission: +r.admission || 0,
-          discharge: +r.discharge || 0,
-          transfer: +r.transfer || 0,
-          mortality: +r.mortality || 0,
-          final: 0
-        };
-        row.final = computeFinal(row);
-        return row;
+    function showInstantDefaultTable() {
+      currentData = deepClone(defaultData).map(r => {
+        r.final = computeFinal(r);
+        return r;
       });
 
-      isLocked = !!data.locked;
+      // default: not locked until we know
+      isLocked = false;
+      updateLockButton();
 
-      document.getElementById('selectedDate').textContent = formatDate(selectedDate);
-
-      const disabled = isLocked && !isAdmin;
+      // reset textareas fast
       const rp = document.getElementById('responsiblePerson');
       const uo = document.getElementById('urgentOperations');
-      rp.value = data.responsible || '';
-      uo.value = data.urgent || '';
-      rp.disabled = disabled;
-      uo.disabled = disabled;
+      rp.value = '';
+      uo.value = '';
+      rp.disabled = false;
+      uo.disabled = false;
 
-      updateLockButton();
+      document.getElementById('selectedDate').textContent = formatDate(selectedDate);
       renderTable();
+      setStatus('loading', 'იტვირთება...');
+    }
+
+    // =========================
+    // Firestore load
+    // =========================
+    async function loadAllData() {
+      // 1) show default instantly (NO WAIT)
+      showInstantDefaultTable();
+
+      // 2) then fetch real data and overwrite if exists
+      if (!db) {
+        setStatus('warn', 'Firebase არ არის დაკონფიგურებული');
+        return;
+      }
+
+      const docId = getDocId(selectedDate);
+
+      try {
+        const doc = await db.collection('dailyData').doc(docId).get();
+
+        if (!doc.exists) {
+          // no saved doc -> keep defaults
+          isLocked = false;
+          updateLockButton();
+          setStatus('ok', 'მზადაა (ახალი დღე)');
+          return;
+        }
+
+        const d = doc.data() || {};
+        const rows = Array.isArray(d.rows) ? d.rows : deepClone(defaultData);
+
+        currentData = rows.map(r => {
+          const row = {
+            dept: r.dept ?? '',
+            initial: +r.initial || 0,
+            admission: +r.admission || 0,
+            discharge: +r.discharge || 0,
+            transfer: +r.transfer || 0,
+            mortality: +r.mortality || 0,
+            final: 0
+          };
+          row.final = computeFinal(row);
+          return row;
+        });
+
+        isLocked = !!d.locked;
+
+        document.getElementById('responsiblePerson').value = d.responsible || '';
+        document.getElementById('urgentOperations').value = d.urgent || '';
+
+        const disabled = isLocked && !isAdmin;
+        document.getElementById('responsiblePerson').disabled = disabled;
+        document.getElementById('urgentOperations').disabled = disabled;
+
+        updateLockButton();
+        renderTable();
+        setStatus('ok', isLocked ? 'მზადაა (დაბლოკილია)' : 'მზადაა');
+      } catch (e) {
+        console.warn('Load error:', e);
+        setStatus('warn', 'ჩატვირთვის შეცდომა');
+      }
     }
 
     function scheduleSave() {
       if (!db) return;
       if (!canEdit()) return;
-
       if (pendingSaveTimer) clearTimeout(pendingSaveTimer);
       pendingSaveTimer = setTimeout(saveAllData, 350);
     }
@@ -336,7 +394,7 @@
     }
 
     // =========================
-    // Table
+    // Table render
     // =========================
     function renderTable() {
       const tbody = document.getElementById('tableBody');
@@ -383,7 +441,7 @@
       tbody.appendChild(totalRow);
     }
 
-    // Event delegation editing (ერთჯერადი listener, არ "გროვდება")
+    // Event delegation editing (ერთჯერადი)
     function setupTableEditing() {
       const tbody = document.getElementById('tableBody');
 
@@ -437,10 +495,7 @@
     // =========================
     function updateLockButton() {
       const btn = document.getElementById('adminButton');
-      if (!isAdmin) {
-        btn.style.display = 'none';
-        return;
-      }
+      if (!isAdmin) { btn.style.display = 'none'; return; }
       btn.style.display = 'inline-block';
       btn.textContent = isLocked ? 'განბლოკვა' : 'დაბლოკვა';
     }
@@ -457,6 +512,7 @@
       document.getElementById('urgentOperations').disabled = disabled;
 
       saveAllData();
+      setStatus('ok', isLocked ? 'მზადაა (დაბლოკილია)' : 'მზადაა');
     }
 
     // =========================
@@ -477,7 +533,7 @@
     }
 
     // =========================
-    // Calendar (ფიქსები: firstDay, closure bug)
+    // Calendar (instant open + instant table render)
     // =========================
     function renderCalendar(year) {
       document.getElementById('calendarTitle').textContent = `${year} წლის კალენდარი`;
@@ -505,7 +561,7 @@
         thead.appendChild(headRow);
         const tbody = document.createElement('tbody');
 
-        const firstDay = new Date(year, m, 1).getDay(); // 0..6 (Sun..Sat)
+        const firstDay = new Date(year, m, 1).getDay(); // 0..6
         const daysInMonth = new Date(year, m + 1, 0).getDate();
 
         let dayNum = 1;
@@ -518,27 +574,26 @@
 
             if (r === 0 && c < firstDay) {
               td.className = 'empty';
-              td.textContent = '';
             } else if (dayNum > daysInMonth) {
               td.className = 'empty';
-              td.textContent = '';
             } else {
-              const clickedDay = dayNum; // ✅ capture (fix closure)
+              const clickedDay = dayNum; // ✅ closure fixed
               td.textContent = clickedDay;
 
               if (year === today.getFullYear() && m === today.getMonth() && clickedDay === today.getDate()) {
                 td.classList.add('today');
               }
 
-              td.addEventListener('click', async () => {
+              td.addEventListener('click', () => {
                 selectedDate = new Date(year, m, clickedDay);
+
+                // ✅ IMPORTANT: show table immediately, default rows instantly
                 setView('table');
-                await loadAllData(); // ✅ always renders list for all users
+                loadAllData(); // loads default instantly, then overwrites from Firestore
               });
 
               dayNum++;
             }
-
             tr.appendChild(td);
           }
 
@@ -558,32 +613,24 @@
       renderCalendar(currentYear);
     }
 
-    async function prevDay() {
+    function prevYear() { currentYear--; renderCalendar(currentYear); }
+    function nextYear() { currentYear++; renderCalendar(currentYear); }
+
+    function prevDay() {
       selectedDate.setDate(selectedDate.getDate() - 1);
-      await loadAllData();
+      // ✅ instant default table, then load real
+      loadAllData();
     }
 
-    async function nextDay() {
+    function nextDay() {
       selectedDate.setDate(selectedDate.getDate() + 1);
-      await loadAllData();
+      loadAllData();
     }
 
-    function prevYear() {
-      currentYear--;
-      renderCalendar(currentYear);
-    }
-
-    function nextYear() {
-      currentYear++;
-      renderCalendar(currentYear);
-    }
-
-    function exportPDF() {
-      window.print();
-    }
+    function exportPDF() { window.print(); }
 
     // =========================
-    // Sorting (sorts currentData, not DOM)
+    // Sorting (sort currentData instantly)
     // =========================
     function sortTable(col) {
       sortDirection[col] = (sortDirection[col] === 'asc') ? 'desc' : 'asc';
@@ -591,7 +638,6 @@
 
       currentData.sort((a, b) => {
         let A, B;
-
         if (col === 0) { A = (a.dept || '').toLowerCase(); B = (b.dept || '').toLowerCase(); }
         if (col === 1) { A = +a.initial || 0; B = +b.initial || 0; }
         if (col === 2) { A = +a.admission || 0; B = +b.admission || 0; }
@@ -605,12 +651,12 @@
       });
 
       renderTable();
-      // order persistence optional:
+      // თუ გინდა order-ის შენახვაც:
       // scheduleSave();
     }
 
     // =========================
-    // UI wiring (no inline onclick dependency)
+    // UI wiring (single place)
     // =========================
     function setupUI() {
       document.getElementById('loginBtn').addEventListener('click', checkPassword);
@@ -628,7 +674,6 @@
 
       document.getElementById('adminButton').addEventListener('click', toggleLock);
 
-      // header sort
       document.querySelectorAll('#dataTable thead th').forEach(th => {
         th.addEventListener('click', () => {
           const col = parseInt(th.dataset.col, 10);
@@ -639,10 +684,8 @@
       setupTableEditing();
       setupExtraFields();
 
-      // start view
       setView('auth');
-      // If you want auto-open calendar (optional):
-      // setView('calendar'); renderCalendar(currentYear);
+      setStatus('ok', 'მზადაა');
     }
 
     window.addEventListener('load', setupUI);
