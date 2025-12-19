@@ -6,18 +6,19 @@
 
   <script src="/_sdk/element_sdk.js"></script>
 
-  <!-- Firebase SDK -->
+  <!-- ✅ Firebase (Compat) — მუშაობს პირდაპირ <script> გარემოში, module/import-ის გარეშე -->
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-analytics-compat.js"></script>
 
   <style>
     body { margin:0; padding:0; font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:#f5f5f5; }
     .page-wrapper { padding:20px; min-height:100vh; }
-    .header { text-align:center; margin-bottom:20px; }
+    .header { text-align:center; margin-bottom:16px; }
     .header h1 { font-size:24px; color:#2c3e50; margin:0; }
     .header h2 { font-size:18px; color:#34495e; margin:6px 0 0 0; }
 
-    .controls { text-align:center; margin:20px 0; display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+    .controls { text-align:center; margin:16px 0; display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
     .btn { padding:10px 20px; border:none; border-radius:5px; cursor:pointer; font-weight:bold; color:white; }
     .btn-export { background:#2196F3; }
     .btn-nav { background:#4CAF50; }
@@ -51,22 +52,24 @@
     .today { background:red !important; color:white; font-weight:bold; }
 
     #authView { max-width:500px; margin:50px auto; text-align:center; background:white; padding:40px; border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,0.15); }
-    #logo { max-width:300px; margin-bottom:30px; }
+    #logo { max-width:300px; margin-bottom:20px; }
     input[type="password"] { width:100%; padding:12px; margin:15px 0; border:1px solid #ddd; border-radius:4px; font-size:16px; box-sizing:border-box; }
 
-    .extra-fields { margin-top:30px; padding:20px; background:#f9f9f9; border-radius:8px; }
+    .extra-fields { margin-top:20px; padding:20px; background:#f9f9f9; border-radius:8px; }
     .extra-fields textarea { width:100%; height:80px; padding:10px; border:1px solid #ddd; border-radius:4px; resize:vertical; box-sizing:border-box; }
 
-    /* მცირე "მცოდნე" ინდიკატორი (არ არის სავალდებულო, მაგრამ გეხმარება) */
-    .statusline { text-align:center; color:#666; font-size:12px; margin-top:-10px; }
-    .statusdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:#4CAF50; vertical-align:middle; }
+    /* ✅ Firebase connection badge */
+    .statusline { text-align:center; color:#666; font-size:12px; margin:6px 0 0 0; }
+    .pill { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.08); }
+    .dot { width:10px; height:10px; border-radius:50%; background:#FF9800; } /* default loading */
+    .ok { background:#4CAF50 !important; }
+    .bad { background:#F44336 !important; }
 
     @media print {
-      .controls, .extra-fields, #authView, #calendarView { display:none !important; }
+      .controls, .extra-fields, #authView, #calendarView, .statusline { display:none !important; }
       #tableView { display:block !important; }
       .table-container { box-shadow:none; padding:0; }
       .page-wrapper { padding:0; }
-      .statusline { display:none !important; }
     }
   </style>
 </head>
@@ -76,12 +79,19 @@
 
     <!-- პაროლის შესვლა + ლოგო -->
     <div id="authView">
-      <!-- ✅ ლოგო: ატვირთე იგივე რეპოში tm_center_logo.png -->
       <img src="tm_center_logo.png" alt="TM Center Logo" id="logo">
       <h2>შესვლა</h2>
       <input type="password" id="password" placeholder="პაროლი">
       <button class="btn btn-nav" id="loginBtn" type="button">შესვლა</button>
-      <p style="color:#666;font-size:13px;margin-top:12px;">
+
+      <div class="statusline" style="margin-top:14px;">
+        <span class="pill">
+          <span class="dot" id="fbDot"></span>
+          <span id="fbText">Firebase: შემოწმება...</span>
+        </span>
+      </div>
+
+      <p style="color:#666;font-size:13px;margin-top:14px;">
         User: <b>htmc</b> • Admin: <b>admin1</b>
       </p>
     </div>
@@ -104,13 +114,12 @@
       <div class="header">
         <h1>ინფექციურ-კლინიკური დეპარტამენტი</h1>
         <h2>Inpatients turnover - <span id="selectedDate">--.--.--</span></h2>
-      </div>
-
-      <!-- ✅ იდეა: "დაყოვნების" გარეშე — ცხრილი მაშინვე ჩანს default-ით, ხოლო Firestore-დან რომ მოვა,
-           რეალურ მონაცემებზე გადაეწერება (თუ არსებობს). -->
-      <div class="statusline" id="statusLine">
-        <span class="statusdot" id="statusDot"></span>
-        <span id="statusText">მზადაა</span>
+        <div class="statusline">
+          <span class="pill">
+            <span class="dot" id="fbDot2"></span>
+            <span id="fbText2">Firebase: შემოწმება...</span>
+          </span>
+        </div>
       </div>
 
       <div class="controls">
@@ -138,7 +147,6 @@
         </table>
       </div>
 
-      <!-- დამატებითი ველები -->
       <div class="extra-fields">
         <label><strong>პასუხისმგებელი მორიგე:</strong></label><br>
         <textarea id="responsiblePerson"></textarea><br><br>
@@ -150,23 +158,66 @@
 
   <script>
     // =========================
-    // Firebase Config (შეცვალეთ თქვენი პროექტით)
+    // ✅ Firebase config (შენი მონაცემებით)
     // =========================
     const firebaseConfig = {
-      apiKey: "შეცვალეთ_აქ",
-      authDomain: "შეცვალეთ_აქ",
-      projectId: "შეცვალეთ_აქ",
-      storageBucket: "შეცვალეთ_აქ",
-      messagingSenderId: "შეცვალეთ_აქ",
-      appId: "შეცვალეთ_აქ"
+      apiKey: "AIzaSyDJv8Jn4eJhpj2k1STTtzv6RAnU4pa1crg",
+      authDomain: "inpatients-turnover.firebaseapp.com",
+      projectId: "inpatients-turnover",
+      storageBucket: "inpatients-turnover.firebasestorage.app",
+      messagingSenderId: "1064730454016",
+      appId: "1:1064730454016:web:dc3d23a938b100e3c150e5",
+      measurementId: "G-52MZWTGQ69"
     };
 
     let db = null;
-    try {
-      firebase.initializeApp(firebaseConfig);
-      db = firebase.firestore();
-    } catch (e) {
-      console.warn("Firebase init error:", e);
+
+    function setFbStatus(ok, text) {
+      const dot1 = document.getElementById('fbDot');
+      const txt1 = document.getElementById('fbText');
+      const dot2 = document.getElementById('fbDot2');
+      const txt2 = document.getElementById('fbText2');
+
+      if (dot1) { dot1.classList.remove('ok','bad'); dot1.classList.add(ok ? 'ok' : 'bad'); }
+      if (txt1) txt1.textContent = text;
+
+      if (dot2) { dot2.classList.remove('ok','bad'); dot2.classList.add(ok ? 'ok' : 'bad'); }
+      if (txt2) txt2.textContent = text;
+    }
+
+    // Firebase init + quick connectivity check
+    function initFirebase() {
+      try {
+        firebase.initializeApp(firebaseConfig);
+
+        // analytics optional (თუ არ იმუშავებს, არ ვაჩერებთ საიტს)
+        try {
+          if (firebase.analytics) firebase.analytics();
+        } catch (e) {}
+
+        db = firebase.firestore();
+
+        // ✅ Firestore local cache -> სწრაფი გახდება მეორე გახსნიდან და ოფლაინშიც ნახავს
+        try {
+          db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+        } catch (e) {}
+
+        // ✅ Fast "connected?" indicator:
+        // Firestore SDK შეიძლება init-ზე OK იყოს, მაგრამ rules/ქსელი მაინც აჭედავდეს.
+        // ამიტომ ვაკეთებთ ერთ "ping" read-ს.
+        setFbStatus(false, "Firebase: შემოწმება...");
+        db.collection('_meta').doc('ping').get()
+          .then(() => setFbStatus(true, "Firebase: დაკავშირებულია ✓"))
+          .catch((err) => {
+            console.warn("Firebase ping error:", err);
+            setFbStatus(false, "Firebase: ვერ დაუკავშირდა ✗");
+          });
+
+      } catch (e) {
+        console.warn("Firebase init error:", e);
+        db = null;
+        setFbStatus(false, "Firebase: ვერ დაუკავშირდა ✗");
+      }
     }
 
     // =========================
@@ -218,20 +269,6 @@
     let isSaving = false;
 
     // =========================
-    // UI status helper
-    // =========================
-    function setStatus(kind, text) {
-      const dot = document.getElementById('statusDot');
-      const label = document.getElementById('statusText');
-      label.textContent = text;
-
-      // kind: ok / loading / warn
-      if (kind === 'loading') dot.style.background = '#FF9800';
-      else if (kind === 'warn') dot.style.background = '#F44336';
-      else dot.style.background = '#4CAF50';
-    }
-
-    // =========================
     // Helpers
     // =========================
     function deepClone(x) { return JSON.parse(JSON.stringify(x)); }
@@ -243,9 +280,7 @@
       return `${day}.${month}.${year}`;
     }
 
-    function getDocId(date) {
-      return formatDate(date).replace(/\./g, '-'); // dd-mm-yy
-    }
+    function getDocId(date) { return formatDate(date).replace(/\./g, '-'); } // dd-mm-yy
 
     function computeFinal(row) {
       const initial = +row.initial || 0;
@@ -256,9 +291,7 @@
       return initial + admission - discharge - transfer - mortality;
     }
 
-    function canEdit() {
-      return isAdmin || !isLocked;
-    }
+    function canEdit() { return isAdmin || !isLocked; }
 
     function setView(view) {
       document.getElementById('authView').style.display = (view === 'auth') ? 'block' : 'none';
@@ -275,7 +308,7 @@
     }
 
     // =========================
-    // INSTANT TABLE: show default immediately, then merge Firestore data
+    // FAST LOAD: show default immediately (instant), then overwrite from Firestore
     // =========================
     function showInstantDefaultTable() {
       currentData = deepClone(defaultData).map(r => {
@@ -283,11 +316,12 @@
         return r;
       });
 
-      // default: not locked until we know
+      // conservative defaults before real doc
       isLocked = false;
       updateLockButton();
 
-      // reset textareas fast
+      document.getElementById('selectedDate').textContent = formatDate(selectedDate);
+
       const rp = document.getElementById('responsiblePerson');
       const uo = document.getElementById('urgentOperations');
       rp.value = '';
@@ -295,23 +329,15 @@
       rp.disabled = false;
       uo.disabled = false;
 
-      document.getElementById('selectedDate').textContent = formatDate(selectedDate);
       renderTable();
-      setStatus('loading', 'იტვირთება...');
     }
 
-    // =========================
-    // Firestore load
-    // =========================
     async function loadAllData() {
-      // 1) show default instantly (NO WAIT)
+      // 1) instant default (no wait)
       showInstantDefaultTable();
 
-      // 2) then fetch real data and overwrite if exists
-      if (!db) {
-        setStatus('warn', 'Firebase არ არის დაკონფიგურებული');
-        return;
-      }
+      // 2) no firebase -> stop
+      if (!db) return;
 
       const docId = getDocId(selectedDate);
 
@@ -319,10 +345,9 @@
         const doc = await db.collection('dailyData').doc(docId).get();
 
         if (!doc.exists) {
-          // no saved doc -> keep defaults
+          // keep default
           isLocked = false;
           updateLockButton();
-          setStatus('ok', 'მზადაა (ახალი დღე)');
           return;
         }
 
@@ -354,10 +379,8 @@
 
         updateLockButton();
         renderTable();
-        setStatus('ok', isLocked ? 'მზადაა (დაბლოკილია)' : 'მზადაა');
       } catch (e) {
         console.warn('Load error:', e);
-        setStatus('warn', 'ჩატვირთვის შეცდომა');
       }
     }
 
@@ -365,7 +388,7 @@
       if (!db) return;
       if (!canEdit()) return;
       if (pendingSaveTimer) clearTimeout(pendingSaveTimer);
-      pendingSaveTimer = setTimeout(saveAllData, 350);
+      pendingSaveTimer = setTimeout(saveAllData, 300);
     }
 
     async function saveAllData() {
@@ -394,7 +417,7 @@
     }
 
     // =========================
-    // Table render
+    // Render table
     // =========================
     function renderTable() {
       const tbody = document.getElementById('tableBody');
@@ -441,7 +464,9 @@
       tbody.appendChild(totalRow);
     }
 
-    // Event delegation editing (ერთჯერადი)
+    // =========================
+    // Editing (event delegation)
+    // =========================
     function setupTableEditing() {
       const tbody = document.getElementById('tableBody');
 
@@ -485,7 +510,6 @@
     function setupExtraFields() {
       const rp = document.getElementById('responsiblePerson');
       const uo = document.getElementById('urgentOperations');
-
       rp.addEventListener('input', () => { if (canEdit()) scheduleSave(); });
       uo.addEventListener('input', () => { if (canEdit()) scheduleSave(); });
     }
@@ -512,7 +536,6 @@
       document.getElementById('urgentOperations').disabled = disabled;
 
       saveAllData();
-      setStatus('ok', isLocked ? 'მზადაა (დაბლოკილია)' : 'მზადაა');
     }
 
     // =========================
@@ -533,7 +556,7 @@
     }
 
     // =========================
-    // Calendar (instant open + instant table render)
+    // Calendar
     // =========================
     function renderCalendar(year) {
       document.getElementById('calendarTitle').textContent = `${year} წლის კალენდარი`;
@@ -577,7 +600,7 @@
             } else if (dayNum > daysInMonth) {
               td.className = 'empty';
             } else {
-              const clickedDay = dayNum; // ✅ closure fixed
+              const clickedDay = dayNum; // closure fix
               td.textContent = clickedDay;
 
               if (year === today.getFullYear() && m === today.getMonth() && clickedDay === today.getDate()) {
@@ -586,10 +609,8 @@
 
               td.addEventListener('click', () => {
                 selectedDate = new Date(year, m, clickedDay);
-
-                // ✅ IMPORTANT: show table immediately, default rows instantly
                 setView('table');
-                loadAllData(); // loads default instantly, then overwrites from Firestore
+                loadAllData(); // instant default -> then fetch
               });
 
               dayNum++;
@@ -608,29 +629,17 @@
       }
     }
 
-    function showCalendar() {
-      setView('calendar');
-      renderCalendar(currentYear);
-    }
-
+    function showCalendar() { setView('calendar'); renderCalendar(currentYear); }
     function prevYear() { currentYear--; renderCalendar(currentYear); }
     function nextYear() { currentYear++; renderCalendar(currentYear); }
 
-    function prevDay() {
-      selectedDate.setDate(selectedDate.getDate() - 1);
-      // ✅ instant default table, then load real
-      loadAllData();
-    }
-
-    function nextDay() {
-      selectedDate.setDate(selectedDate.getDate() + 1);
-      loadAllData();
-    }
+    function prevDay() { selectedDate.setDate(selectedDate.getDate() - 1); loadAllData(); }
+    function nextDay() { selectedDate.setDate(selectedDate.getDate() + 1); loadAllData(); }
 
     function exportPDF() { window.print(); }
 
     // =========================
-    // Sorting (sort currentData instantly)
+    // Sorting
     // =========================
     function sortTable(col) {
       sortDirection[col] = (sortDirection[col] === 'asc') ? 'desc' : 'asc';
@@ -645,20 +654,19 @@
         if (col === 4) { A = +a.transfer || 0; B = +b.transfer || 0; }
         if (col === 5) { A = +a.mortality || 0; B = +b.mortality || 0; }
         if (col === 6) { A = +a.final || 0; B = +b.final || 0; }
-
         if (A === B) return 0;
         return (dir === 'asc') ? (A > B ? 1 : -1) : (A < B ? 1 : -1);
       });
 
       renderTable();
-      // თუ გინდა order-ის შენახვაც:
-      // scheduleSave();
     }
 
     // =========================
-    // UI wiring (single place)
+    // UI wiring
     // =========================
     function setupUI() {
+      initFirebase(); // ✅ start connection test immediately
+
       document.getElementById('loginBtn').addEventListener('click', checkPassword);
       document.getElementById('password').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') checkPassword();
@@ -685,7 +693,6 @@
       setupExtraFields();
 
       setView('auth');
-      setStatus('ok', 'მზადაა');
     }
 
     window.addEventListener('load', setupUI);
