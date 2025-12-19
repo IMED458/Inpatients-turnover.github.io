@@ -101,7 +101,7 @@
       </div>
 
       <p style="color:#666;font-size:13px;margin-top:14px;">
-        User: <b>htmc</b> • Admin: <b>admin1</b>
+       
       </p>
     </div>
 
