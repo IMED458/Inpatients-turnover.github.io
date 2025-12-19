@@ -99,7 +99,7 @@
     <!-- კალენდარი -->
     <div id="calendarView" style="display:none;">
       <div class="header">
-        <h1>ინფექციურ-კლინიკური დეპარტამენტი</h1>
+        <h1>თსსუსა და ინგოროყვას კლინიკა </h1>
         <h2 id="calendarTitle">2025 წლის კალენდარი</h2>
       </div>
       <div class="controls">
