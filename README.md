@@ -119,7 +119,7 @@
 
     <div id="tableView" style="display:none;">
       <div class="header">
-        <h1>ინფექციურ-კლინიკური დეპარტამენტი</h1>
+        <h1>თსსუსა და ინგოროყვას კლინიკა</h1>
         <h2>Inpatients turnover - <span id="selectedDate">--.--.--</span></h2>
         <div class="statusline">
           <span class="pill">
