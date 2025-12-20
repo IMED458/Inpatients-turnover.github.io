@@ -2,7 +2,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Inpatient Calendar - 2025</title>
+  <title>Inpatient Calendar</title>
 
   <script src="/_sdk/element_sdk.js"></script>
 
@@ -26,7 +26,7 @@
     .btn-block { background:#F44336; }
     .btn:hover { opacity:0.9; }
 
-    .table-container { background:white; padding:20px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.1); overflow-x:auto; }
+    .table-container { background:white; padding:20px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.1); overflow-x:auto; position:relative; }
     table { width:100%; border-collapse:collapse; border:3px solid #2c5f2d; }
     th { background:#2c5f2d; color:white; padding:12px 8px; text-align:center; cursor:pointer; user-select:none; }
     td { padding:8px; border:1px solid #d0d0d0; text-align:center; }
@@ -64,12 +64,20 @@
     .ok { background:#4CAF50 !important; }
     .bad { background:#F44336 !important; }
 
+    .overlay {
+      position:absolute; inset:0; background:rgba(255,255,255,0.7);
+      display:none; align-items:center; justify-content:center;
+      font-weight:700; color:#2c3e50;
+    }
+    .overlay.show { display:flex; }
+
     @media print {
       .controls, #authView, #calendarView, .statusline { display:none !important; }
       #tableView { display:block !important; }
       .page-wrapper { padding:0; background:white; }
       body { background:white; }
       .table-container { box-shadow:none; padding:0; overflow:visible; }
+      .overlay { display:none !important; }
       table { border:2px solid #222; }
       th { background:#2c5f2d !important; color:#fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       td:first-child { background:#dae8fc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -87,6 +95,7 @@
 <body>
   <div class="page-wrapper">
 
+    <!-- Login -->
     <div id="authView">
       <img src="tm_center_logo.png" alt="TM Center Logo" id="logo">
       <h2>შესვლა</h2>
@@ -101,13 +110,14 @@
       </div>
 
       <p style="color:#666;font-size:13px;margin-top:14px;">
-        User: <b>htmc</b> • Admin: <b>admin1</b>
+       
       </p>
     </div>
 
+    <!-- Calendar -->
     <div id="calendarView" style="display:none;">
       <div class="header">
-        <h1>ინფექციურ-კლინიკური დეპარტამენტი</h1>
+        <h1>თსსუსა და ინგოროყვას კლინიკა</h1>
         <h2 id="calendarTitle">2025 წლის კალენდარი</h2>
       </div>
       <div class="controls">
@@ -117,9 +127,10 @@
       <div class="calendar-container" id="calendarContainer"></div>
     </div>
 
+    <!-- Table -->
     <div id="tableView" style="display:none;">
       <div class="header">
-        <h1>ინფექციურ-კლინიკური დეპარტამენტი</h1>
+        <h1>თსსუსა და ინგოროყვას კლინიკა</h1>
         <h2>Inpatients turnover - <span id="selectedDate">--.--.--</span></h2>
         <div class="statusline">
           <span class="pill">
@@ -138,6 +149,8 @@
       </div>
 
       <div class="table-container">
+        <div class="overlay" id="loadingOverlay">იტვირთება...</div>
+
         <table id="dataTable">
           <thead>
             <tr>
@@ -164,7 +177,9 @@
   </div>
 
   <script>
-    // Firebase config
+    // =========================
+    // Firebase
+    // =========================
     const firebaseConfig = {
       apiKey: "AIzaSyDJv8Jn4eJhpj2k1STTtzv6RAnU4pa1crg",
       authDomain: "inpatients-turnover.firebaseapp.com",
@@ -194,6 +209,7 @@
         try { if (firebase.analytics) firebase.analytics(); } catch (e) {}
         db = firebase.firestore();
 
+        // Optional offline cache
         try { db.enablePersistence({ synchronizeTabs:true }).catch(() => {}); } catch (e) {}
 
         setFbStatus(false, "Firebase: შემოწმება...");
@@ -210,70 +226,33 @@
       }
     }
 
-    const FULL_DEFAULT_DATA = [
-      {dept:"ზრდასრულთა ემერჯენსი", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ქირურგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"რეანიმაცია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"კარდიორეანიმაცია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ბავშვთა ემერჯენსი", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ბავშვთა რეანიმაცია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ნევროლოგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ნეიროქირურგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ნეირორეანიმაცია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"თორაკოქირურგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ტრავმატოლოგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ანგიოქირურგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ყბა-სახის ქირურგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"უროლოგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ბავშვთა ქირურგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"პედიატრია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ბავშვთა ონკოჰემატოლოგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ნეფროლოგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ჰეპატოლოგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ინფექციური", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"შინაგანი მედიცინა", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"კარდიოლოგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ონკოჰემატოლოგია 1", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ონკოჰემატოლოგია 2", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"გინეკოლოგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ძვლის ტვინის გადანერგვა", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"მამოლოგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
-      {dept:"ოფთალმოლოგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0}
-    ];
-
-    let currentData = [];
-    let selectedDate = new Date(2025, 11, 19);
-    let currentYear = 2025;
+    // =========================
+    // State
+    // =========================
+    let selectedDate = new Date();
+    let currentYear = selectedDate.getFullYear();
     let isAdmin = false;
     let isLocked = false;
     let sortDirection = {};
+    let currentData = []; // rows
     let pendingSaveTimer = null;
     let isSaving = false;
 
-    function deepClone(x) { return JSON.parse(JSON.stringify(x)); }
-
-    function formatDate(d) {
-      const day = String(d.getDate()).padStart(2, '0');
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const year = String(d.getFullYear()).slice(-2);
-      return `${day}.${month}.${year}`;
-    }
-    function getDocId(date) { return formatDate(date).replace(/\./g, '-'); }
-
-    function computeFinal(row) {
-      const initial = +row.initial || 0;
-      const admission = +row.admission || 0;
-      const discharge = +row.discharge || 0;
-      const transfer = +row.transfer || 0;
-      const mortality = +row.mortality || 0;
-      return initial + admission - discharge - transfer - mortality;
+    // =========================
+    // Helpers
+    // =========================
+    function showOverlay(on) {
+      const el = document.getElementById('loadingOverlay');
+      if (!el) return;
+      el.classList.toggle('show', !!on);
     }
 
-    // ✅ ზოგადი ჩაკეტვა (locked) + ✅ "საწყისი" მხოლოდ ადმინს
-    function canEditCell(field) {
-      if (isLocked && !isAdmin) return false;          // locked -> მხოლოდ admin
-      if (field === 'initial' && !isAdmin) return false; // initial -> მხოლოდ admin
-      return true;                                     // დანარჩენი -> locked-ის მიხედვით
+    function showToast(msg) {
+      const t = document.createElement('div');
+      t.textContent = msg;
+      t.style = 'position:fixed;top:20px;right:20px;background:#333;color:white;padding:15px 25px;border-radius:5px;z-index:1000;';
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 2200);
     }
 
     function setView(view) {
@@ -282,33 +261,15 @@
       document.getElementById('tableView').style.display = (view === 'table') ? 'block' : 'none';
     }
 
-    function showToast(msg) {
-      const t = document.createElement('div');
-      t.textContent = msg;
-      t.style = 'position:fixed;top:20px;right:20px;background:#333;color:white;padding:15px 25px;border-radius:5px;z-index:1000;';
-      document.body.appendChild(t);
-      setTimeout(() => t.remove(), 2500);
+    function formatDate(d) {
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = String(d.getFullYear()).slice(-2);
+      return `${day}.${month}.${year}`;
     }
 
-    function showInstantDefaultTable() {
-      currentData = deepClone(FULL_DEFAULT_DATA).map(r => { r.final = computeFinal(r); return r; });
-
-      // ახალი დღე (ჯერ არ ვიცით locked) -> default unlocked
-      isLocked = false;
-      updateLockButton();
-
-      document.getElementById('selectedDate').textContent = formatDate(selectedDate);
-
-      const rp = document.getElementById('responsiblePerson');
-      const uo = document.getElementById('urgentOperations');
-      rp.value = '';
-      uo.value = '';
-
-      // textarea-ები: locked + non-admin -> disabled
-      rp.disabled = (isLocked && !isAdmin);
-      uo.disabled = (isLocked && !isAdmin);
-
-      renderTable();
+    function getDocId(date) {
+      return formatDate(date).replace(/\./g, '-');
     }
 
     function dateMinusOneDay(dateObj) {
@@ -317,24 +278,151 @@
       return d;
     }
 
-    function applyPrevFinalAsTodayInitial(prevRows, todayRows) {
-      const prevMap = new Map();
-      (prevRows || []).forEach(r => {
-        const dept = (r.dept ?? '').toString();
-        const finalVal = +r.final || 0;
-        prevMap.set(dept, finalVal);
-      });
+    function computeFinal(row) {
+      return (+row.initial||0) + (+row.admission||0) - (+row.discharge||0) - (+row.transfer||0) - (+row.mortality||0);
+    }
 
-      return todayRows.map(r => {
-        const dept = (r.dept ?? '').toString();
-        const initial = prevMap.has(dept) ? prevMap.get(dept) : (+r.initial || 0);
+    // ✔ წერა ყველას შეუძლია, თუ დღე unlocked-ია
+    function canWriteNow() {
+      return !isLocked || isAdmin;
+    }
+
+    // ✔ "საწყისი" (initial) — მხოლოდ admin-ს შეუძლია ხელით შეცვლა
+    //   (მაგრამ ჩვენ მაინც ავტომატურად ვწერთ prevFinal-ს, ამიტომ პრაქტიკულად edit იშვიათად დაგჭირდება)
+    function canEditCell(field) {
+      if (!canWriteNow()) return false;
+      if (field === 'initial' && !isAdmin) return false;
+      return true;
+    }
+
+    function updateLockButton() {
+      const btn = document.getElementById('adminButton');
+      if (!isAdmin) { btn.style.display = 'none'; return; }
+      btn.style.display = 'inline-block';
+      btn.textContent = isLocked ? 'განბლოკვა' : 'დაბლოკვა';
+    }
+
+    function setTextareasDisabled() {
+      const disabled = !canWriteNow();
+      document.getElementById('responsiblePerson').disabled = disabled;
+      document.getElementById('urgentOperations').disabled = disabled;
+    }
+
+    // =========================
+    // Cache (instant load)
+    // =========================
+    function cacheKeyForDate(d) {
+      return `inpatients_cache_${getDocId(d)}`;
+    }
+
+    function saveCacheForDate(d, payload) {
+      try { localStorage.setItem(cacheKeyForDate(d), JSON.stringify(payload)); } catch(e) {}
+    }
+
+    function loadCacheForDate(d) {
+      try {
+        const raw = localStorage.getItem(cacheKeyForDate(d));
+        return raw ? JSON.parse(raw) : null;
+      } catch(e) {
+        return null;
+      }
+    }
+
+    function applyPayloadToUI(payload) {
+      if (!payload) return;
+
+      currentData = Array.isArray(payload.rows) ? payload.rows : [];
+      currentData = currentData.map(r => ({
+        dept: String(r.dept ?? ''),
+        initial: +r.initial || 0,
+        admission: +r.admission || 0,
+        discharge: +r.discharge || 0,
+        transfer: +r.transfer || 0,
+        mortality: +r.mortality || 0,
+        final: +r.final || 0
+      }));
+
+      isLocked = !!payload.locked;
+
+      document.getElementById('responsiblePerson').value = payload.responsible || '';
+      document.getElementById('urgentOperations').value = payload.urgent || '';
+
+      updateLockButton();
+      setTextareasDisabled();
+      renderTable();
+    }
+
+    // =========================
+    // Firestore I/O
+    // =========================
+    async function readDayDoc(dateObj) {
+      const id = getDocId(dateObj);
+      const snap = await db.collection('dailyData').doc(id).get();
+      if (!snap.exists) return null;
+      const d = snap.data() || {};
+      return {
+        rows: Array.isArray(d.rows) ? d.rows : [],
+        responsible: d.responsible || '',
+        urgent: d.urgent || '',
+        locked: !!d.locked
+      };
+    }
+
+    function buildDeptListFromSources(todayDoc, prevDoc) {
+      // 1) Today rows
+      if (todayDoc && Array.isArray(todayDoc.rows) && todayDoc.rows.length) {
+        return todayDoc.rows.map(r => String(r.dept ?? '')).filter(Boolean);
+      }
+      // 2) Prev rows
+      if (prevDoc && Array.isArray(prevDoc.rows) && prevDoc.rows.length) {
+        return prevDoc.rows.map(r => String(r.dept ?? '')).filter(Boolean);
+      }
+      // 3) As a last fallback, keep an internal list (rarely used)
+      //    (შენ თქვი "განულებული არ მინდა" — აქ მხოლოდ dept-ების სიაა fallback,
+      //     ციფრებს მაინც Firebase-დან ან prevFinal-დან ავაგებთ)
+      return [
+        "ზრდასრულთა ემერჯენსი","ქირურგია","რეანიმაცია","კარდიორეანიმაცია","ბავშვთა ემერჯენსი","ბავშვთა რეანიმაცია",
+        "ნევროლოგია","ნეიროქირურგია","ნეირორეანიმაცია","თორაკოქირურგია","ტრავმატოლოგია","ანგიოქირურგია",
+        "ყბა-სახის ქირურგია","უროლოგია","ბავშვთა ქირურგია","პედიატრია","ბავშვთა ონკოჰემატოლოგია","ნეფროლოგია",
+        "ჰეპატოლოგია","ინფექციური","შინაგანი მედიცინა","კარდიოლოგია","ონკოჰემატოლოგია 1","ონკოჰემატოლოგია 2",
+        "გინეკოლოგია","ძვლის ტვინის გადანერგვა","მამოლოგია","ოფთალმოლოგია"
+      ];
+    }
+
+    function mapPrevFinal(prevDoc) {
+      const m = new Map();
+      if (!prevDoc || !Array.isArray(prevDoc.rows)) return m;
+      prevDoc.rows.forEach(r => {
+        const dept = String(r.dept ?? '');
+        if (!dept) return;
+        m.set(dept, (+r.final || 0));
+      });
+      return m;
+    }
+
+    function mapTodayRows(todayDoc) {
+      const m = new Map();
+      if (!todayDoc || !Array.isArray(todayDoc.rows)) return m;
+      todayDoc.rows.forEach(r => {
+        const dept = String(r.dept ?? '');
+        if (!dept) return;
+        m.set(dept, r);
+      });
+      return m;
+    }
+
+    function composeRowsForceInitial(depts, prevFinalMap, todayMap) {
+      return depts.map(dept => {
+        const saved = todayMap.get(dept) || {};
+        const initial = prevFinalMap.has(dept) ? (+prevFinalMap.get(dept) || 0) : (+saved.initial || 0);
+
         const row = {
           dept,
           initial,
-          admission: +r.admission || 0,
-          discharge: +r.discharge || 0,
-          transfer: +r.transfer || 0,
-          mortality: +r.mortality || 0,
+          admission: +saved.admission || 0,
+          discharge: +saved.discharge || 0,
+          transfer: +saved.transfer || 0,
+          mortality: +saved.mortality || 0,
           final: 0
         };
         row.final = computeFinal(row);
@@ -350,8 +438,7 @@
 
     async function saveAllData() {
       if (!db) return;
-      if (isLocked && !isAdmin) return; // global lock respects
-
+      if (!canWriteNow()) return;
       if (isSaving) return;
       isSaving = true;
 
@@ -362,10 +449,17 @@
           rows: currentData,
           responsible: document.getElementById('responsiblePerson').value || '',
           urgent: document.getElementById('urgentOperations').value || '',
-          locked: isLocked
+          locked: !!isLocked
         }, { merge:true });
 
-        showToast('შენახულია ✓');
+        // update cache
+        saveCacheForDate(selectedDate, {
+          rows: currentData,
+          responsible: document.getElementById('responsiblePerson').value || '',
+          urgent: document.getElementById('urgentOperations').value || '',
+          locked: !!isLocked
+        });
+
       } catch (e) {
         console.warn('Save error:', e);
         showToast('შენახვა ვერ მოხერხდა');
@@ -374,76 +468,101 @@
       }
     }
 
+    // =========================
+    // Load logic
+    // =========================
     async function loadAllData() {
-      // 1) UI დაუყოვნებლივ აჩვენე
-      showInstantDefaultTable();
       if (!db) return;
 
-      const docId = getDocId(selectedDate);
+      document.getElementById('selectedDate').textContent = formatDate(selectedDate);
+
+      // 1) Instant: show cache if exists (no zeros UI)
+      const cached = loadCacheForDate(selectedDate);
+      if (cached) {
+        applyPayloadToUI(cached);
+      } else {
+        // თუ cache არაა, უბრალოდ overlay (არ ვაჩვენებთ ნულებს)
+        currentData = [];
+        renderTable();
+      }
+
+      showOverlay(true);
 
       try {
-        const doc = await db.collection('dailyData').doc(docId).get();
-
-        if (doc.exists) {
-          // ✅ დღევანდელი დოკუმენტი არსებობს — პირდაპირ მისი ტვირთვა
-          const d = doc.data() || {};
-          const rows = Array.isArray(d.rows) ? d.rows : deepClone(FULL_DEFAULT_DATA);
-
-          currentData = rows.map(r => {
-            const row = {
-              dept: r.dept ?? '',
-              initial: +r.initial || 0,
-              admission: +r.admission || 0,
-              discharge: +r.discharge || 0,
-              transfer: +r.transfer || 0,
-              mortality: +r.mortality || 0,
-              final: 0
-            };
-            row.final = computeFinal(row);
-            return row;
-          });
-
-          isLocked = !!d.locked;
-
-          document.getElementById('responsiblePerson').value = d.responsible || '';
-          document.getElementById('urgentOperations').value = d.urgent || '';
-
-          const disabled = isLocked && !isAdmin;
-          document.getElementById('responsiblePerson').disabled = disabled;
-          document.getElementById('urgentOperations').disabled = disabled;
-
-          updateLockButton();
-          renderTable();
-          return;
-        }
-
-        // ✅ დღევანდელი დოკუმენტი არ არსებობს:
-        // წინა დღის final -> დღევანდელი initial
         const prevDate = dateMinusOneDay(selectedDate);
-        const prevDocId = getDocId(prevDate);
 
-        const prevDoc = await db.collection('dailyData').doc(prevDocId).get();
+        // 2) Read prev + today in parallel (prev may be locked -> still readable)
+        const [prevDoc, todayDoc] = await Promise.all([
+          readDayDoc(prevDate),
+          readDayDoc(selectedDate)
+        ]);
 
-        if (prevDoc.exists) {
-          const prevData = prevDoc.data() || {};
-          const prevRows = Array.isArray(prevData.rows) ? prevData.rows : [];
-          currentData = applyPrevFinalAsTodayInitial(prevRows, deepClone(FULL_DEFAULT_DATA));
-          renderTable();
-          showToast('საწყისი შეივსო წინა დღის საბოლოოთი ✓');
+        // 3) Build dept list from Firebase docs
+        const depts = buildDeptListFromSources(todayDoc, prevDoc);
+
+        // 4) Build maps
+        const prevFinalMap = mapPrevFinal(prevDoc);
+        const todayMap = mapTodayRows(todayDoc);
+
+        // 5) Compose rows:
+        //    admission/discharge/transfer/mortality from today (if exists),
+        //    but initial ALWAYS from prev final (even if prev was locked)
+        const rows = composeRowsForceInitial(depts, prevFinalMap, todayMap);
+
+        // 6) Locked flag is from TODAY doc (admin-managed). If today doc doesn't exist -> unlocked
+        isLocked = todayDoc ? !!todayDoc.locked : false;
+
+        // 7) Textareas from today doc
+        document.getElementById('responsiblePerson').value = todayDoc ? (todayDoc.responsible || '') : '';
+        document.getElementById('urgentOperations').value = todayDoc ? (todayDoc.urgent || '') : '';
+
+        currentData = rows;
+
+        updateLockButton();
+        setTextareasDisabled();
+        renderTable();
+
+        // 8) IMPORTANT: write back the forced initial so that Firestore always stays updated
+        //    (but only if day isn't locked OR user is admin)
+        if (canWriteNow()) {
+          await saveAllData();
+          showToast('საწყისი განახლდა წინა დღის საბოლოოთი ✓');
         }
+
+        // cache latest
+        saveCacheForDate(selectedDate, {
+          rows: currentData,
+          responsible: document.getElementById('responsiblePerson').value || '',
+          urgent: document.getElementById('urgentOperations').value || '',
+          locked: !!isLocked
+        });
+
       } catch (e) {
         console.warn('Load error:', e);
+        showToast('ჩატვირთვა ვერ მოხერხდა');
+      } finally {
+        showOverlay(false);
       }
     }
 
+    // =========================
+    // Render & editing
+    // =========================
     function renderTable() {
       const tbody = document.getElementById('tableBody');
       tbody.innerHTML = '';
 
+      // If empty, show a small placeholder row
+      if (!currentData || !currentData.length) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td colspan="7" style="text-align:center;color:#666;padding:18px;">მონაცემები არ არის ნაჩვენები (იტვირთება...)</td>`;
+        tbody.appendChild(tr);
+        return;
+      }
+
       for (let i = 0; i < currentData.length; i++) {
         const row = currentData[i];
 
-        // ✅ თითო სვეტზე edit უფლება ცალკე
         const clsInitial   = canEditCell('initial')   ? 'editable' : '';
         const clsAdmission = canEditCell('admission') ? 'editable' : '';
         const clsDischarge = canEditCell('discharge') ? 'editable' : '';
@@ -498,10 +617,7 @@
         const idx = cell.dataset.index;
         const field = cell.dataset.field;
         if (idx === undefined || !field) return;
-
-        // ✅ ორმაგი დაცვა
         if (!canEditCell(field)) return;
-
         if (cell.querySelector('input')) return;
 
         const input = document.createElement('input');
@@ -517,7 +633,10 @@
         const commit = () => {
           const val = Math.max(0, parseInt(input.value, 10) || 0);
           currentData[idx][field] = val;
+
+          // recompute final
           currentData[idx].final = computeFinal(currentData[idx]);
+
           renderTable();
           scheduleSave();
         };
@@ -534,50 +653,26 @@
       const rp = document.getElementById('responsiblePerson');
       const uo = document.getElementById('urgentOperations');
 
-      rp.addEventListener('input', () => {
-        if (isLocked && !isAdmin) return;
-        scheduleSave();
-      });
-      uo.addEventListener('input', () => {
-        if (isLocked && !isAdmin) return;
-        scheduleSave();
-      });
+      rp.addEventListener('input', () => { if (!canWriteNow()) return; scheduleSave(); });
+      uo.addEventListener('input', () => { if (!canWriteNow()) return; scheduleSave(); });
     }
 
-    function updateLockButton() {
-      const btn = document.getElementById('adminButton');
-      if (!isAdmin) { btn.style.display = 'none'; return; }
-      btn.style.display = 'inline-block';
-      btn.textContent = isLocked ? 'განბლოკვა' : 'დაბლოკვა';
-    }
-
-    function toggleLock() {
+    // =========================
+    // Admin lock
+    // =========================
+    async function toggleLock() {
       if (!isAdmin) return;
       isLocked = !isLocked;
       updateLockButton();
+      setTextareasDisabled();
       renderTable();
-
-      const disabled = isLocked && !isAdmin;
-      document.getElementById('responsiblePerson').disabled = disabled;
-      document.getElementById('urgentOperations').disabled = disabled;
-
-      saveAllData();
+      await saveAllData();
+      showToast(isLocked ? 'დღე დაიბლოკა' : 'დღე განიბლოკა');
     }
 
-    function checkPassword() {
-      const pass = (document.getElementById('password').value || '').trim();
-      isAdmin = (pass === 'admin1');
-
-      if (pass === 'htmc' || isAdmin) {
-        setView('calendar');
-        currentYear = selectedDate.getFullYear();
-        renderCalendar(currentYear);
-        showToast(isAdmin ? 'ადმინი ✓' : 'შესვლა ✓');
-      } else {
-        alert('არასწორი პაროლი');
-      }
-    }
-
+    // =========================
+    // Calendar navigation
+    // =========================
     function renderCalendar(year) {
       document.getElementById('calendarTitle').textContent = `${year} წლის კალენდარი`;
       const container = document.getElementById('calendarContainer');
@@ -651,8 +746,19 @@
     function showCalendar() { setView('calendar'); renderCalendar(currentYear); }
     function prevYear() { currentYear--; renderCalendar(currentYear); }
     function nextYear() { currentYear++; renderCalendar(currentYear); }
-    function prevDay() { selectedDate.setDate(selectedDate.getDate() - 1); document.getElementById('selectedDate').textContent = formatDate(selectedDate); loadAllData(); }
-    function nextDay() { selectedDate.setDate(selectedDate.getDate() + 1); document.getElementById('selectedDate').textContent = formatDate(selectedDate); loadAllData(); }
+
+    function prevDay() {
+      selectedDate.setDate(selectedDate.getDate() - 1);
+      document.getElementById('selectedDate').textContent = formatDate(selectedDate);
+      loadAllData();
+    }
+
+    function nextDay() {
+      selectedDate.setDate(selectedDate.getDate() + 1);
+      document.getElementById('selectedDate').textContent = formatDate(selectedDate);
+      loadAllData();
+    }
+
     function exportPDF() { window.print(); }
 
     function sortTable(col) {
@@ -673,8 +779,29 @@
       });
 
       renderTable();
+      scheduleSave();
     }
 
+    // =========================
+    // Auth (password gate only)
+    // =========================
+    function checkPassword() {
+      const pass = (document.getElementById('password').value || '').trim();
+      isAdmin = (pass === 'admin1');
+
+      if (pass === 'htmc' || isAdmin) {
+        setView('calendar');
+        currentYear = selectedDate.getFullYear();
+        renderCalendar(currentYear);
+        showToast(isAdmin ? 'ადმინი ✓' : 'შესვლა ✓');
+      } else {
+        alert('არასწორი პაროლი');
+      }
+    }
+
+    // =========================
+    // UI wiring
+    // =========================
     function setupUI() {
       initFirebase();
 
