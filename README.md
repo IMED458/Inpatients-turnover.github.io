@@ -101,13 +101,13 @@
       </div>
 
       <p style="color:#666;font-size:13px;margin-top:14px;">
-       
+        User: <b>htmc</b> • Admin: <b>admin1</b>
       </p>
     </div>
 
     <div id="calendarView" style="display:none;">
       <div class="header">
-        <h1>თსსუსა და ინგოროყვას კლინიკა</h1>
+        <h1>ინფექციურ-კლინიკური დეპარტამენტი</h1>
         <h2 id="calendarTitle">2025 წლის კალენდარი</h2>
       </div>
       <div class="controls">
@@ -119,7 +119,7 @@
 
     <div id="tableView" style="display:none;">
       <div class="header">
-        <h1>თსსუსა და ინგოროყვას კლინიკა</h1>
+        <h1>ინფექციურ-კლინიკური დეპარტამენტი</h1>
         <h2>Inpatients turnover - <span id="selectedDate">--.--.--</span></h2>
         <div class="statusline">
           <span class="pill">
@@ -193,6 +193,7 @@
         firebase.initializeApp(firebaseConfig);
         try { if (firebase.analytics) firebase.analytics(); } catch (e) {}
         db = firebase.firestore();
+
         try { db.enablePersistence({ synchronizeTabs:true }).catch(() => {}); } catch (e) {}
 
         setFbStatus(false, "Firebase: შემოწმება...");
@@ -209,11 +210,6 @@
       }
     }
 
-    const defaultData = [
-      {dept:"ზრდadultთა ემერჯენსი", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0}
-    ];
-
-    // ↑ ზემოთ შემთხვევით შემპარვია typo (`ზრდadult...`) — ქვემოთ სწორად დევს სრული ჩამონათვალი
     const FULL_DEFAULT_DATA = [
       {dept:"ზრდასრულთა ემერჯენსი", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
       {dept:"ქირურგია", initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0},
@@ -273,7 +269,12 @@
       return initial + admission - discharge - transfer - mortality;
     }
 
-    function canEdit() { return isAdmin || !isLocked; }
+    // ✅ ზოგადი ჩაკეტვა (locked) + ✅ "საწყისი" მხოლოდ ადმინს
+    function canEditCell(field) {
+      if (isLocked && !isAdmin) return false;          // locked -> მხოლოდ admin
+      if (field === 'initial' && !isAdmin) return false; // initial -> მხოლოდ admin
+      return true;                                     // დანარჩენი -> locked-ის მიხედვით
+    }
 
     function setView(view) {
       document.getElementById('authView').style.display = (view === 'auth') ? 'block' : 'none';
@@ -292,6 +293,7 @@
     function showInstantDefaultTable() {
       currentData = deepClone(FULL_DEFAULT_DATA).map(r => { r.final = computeFinal(r); return r; });
 
+      // ახალი დღე (ჯერ არ ვიცით locked) -> default unlocked
       isLocked = false;
       updateLockButton();
 
@@ -301,8 +303,10 @@
       const uo = document.getElementById('urgentOperations');
       rp.value = '';
       uo.value = '';
-      rp.disabled = false;
-      uo.disabled = false;
+
+      // textarea-ები: locked + non-admin -> disabled
+      rp.disabled = (isLocked && !isAdmin);
+      uo.disabled = (isLocked && !isAdmin);
 
       renderTable();
     }
@@ -314,7 +318,6 @@
     }
 
     function applyPrevFinalAsTodayInitial(prevRows, todayRows) {
-      // map prev final by dept
       const prevMap = new Map();
       (prevRows || []).forEach(r => {
         const dept = (r.dept ?? '').toString();
@@ -322,7 +325,6 @@
         prevMap.set(dept, finalVal);
       });
 
-      // apply to today initial
       return todayRows.map(r => {
         const dept = (r.dept ?? '').toString();
         const initial = prevMap.has(dept) ? prevMap.get(dept) : (+r.initial || 0);
@@ -340,10 +342,41 @@
       });
     }
 
-    async function loadAllData() {
-      // 1) instant table right away
-      showInstantDefaultTable();
+    function scheduleSave() {
+      if (!db) return;
+      if (pendingSaveTimer) clearTimeout(pendingSaveTimer);
+      pendingSaveTimer = setTimeout(saveAllData, 300);
+    }
 
+    async function saveAllData() {
+      if (!db) return;
+      if (isLocked && !isAdmin) return; // global lock respects
+
+      if (isSaving) return;
+      isSaving = true;
+
+      const docId = getDocId(selectedDate);
+
+      try {
+        await db.collection('dailyData').doc(docId).set({
+          rows: currentData,
+          responsible: document.getElementById('responsiblePerson').value || '',
+          urgent: document.getElementById('urgentOperations').value || '',
+          locked: isLocked
+        }, { merge:true });
+
+        showToast('შენახულია ✓');
+      } catch (e) {
+        console.warn('Save error:', e);
+        showToast('შენახვა ვერ მოხერხდა');
+      } finally {
+        isSaving = false;
+      }
+    }
+
+    async function loadAllData() {
+      // 1) UI დაუყოვნებლივ აჩვენე
+      showInstantDefaultTable();
       if (!db) return;
 
       const docId = getDocId(selectedDate);
@@ -352,7 +385,7 @@
         const doc = await db.collection('dailyData').doc(docId).get();
 
         if (doc.exists) {
-          // Normal load
+          // ✅ დღევანდელი დოკუმენტი არსებობს — პირდაპირ მისი ტვირთვა
           const d = doc.data() || {};
           const rows = Array.isArray(d.rows) ? d.rows : deepClone(FULL_DEFAULT_DATA);
 
@@ -384,7 +417,7 @@
           return;
         }
 
-        // ✅ თუ დღევანდელი დოკუმენტი არ არსებობს:
+        // ✅ დღევანდელი დოკუმენტი არ არსებობს:
         // წინა დღის final -> დღევანდელი initial
         const prevDate = dateMinusOneDay(selectedDate);
         const prevDocId = getDocId(prevDate);
@@ -395,74 +428,36 @@
           const prevData = prevDoc.data() || {};
           const prevRows = Array.isArray(prevData.rows) ? prevData.rows : [];
           currentData = applyPrevFinalAsTodayInitial(prevRows, deepClone(FULL_DEFAULT_DATA));
-
-          isLocked = false;
-          updateLockButton();
-
-          // extra fields empty by default for new day
-          document.getElementById('responsiblePerson').value = '';
-          document.getElementById('urgentOperations').value = '';
-          document.getElementById('responsiblePerson').disabled = false;
-          document.getElementById('urgentOperations').disabled = false;
-
           renderTable();
           showToast('საწყისი შეივსო წინა დღის საბოლოოთი ✓');
-        } else {
-          // prev day doesn't exist -> keep zeros
         }
-
       } catch (e) {
         console.warn('Load error:', e);
-      }
-    }
-
-    function scheduleSave() {
-      if (!db) return;
-      if (!canEdit()) return;
-      if (pendingSaveTimer) clearTimeout(pendingSaveTimer);
-      pendingSaveTimer = setTimeout(saveAllData, 300);
-    }
-
-    async function saveAllData() {
-      if (!db) return;
-      if (!canEdit()) return;
-      if (isSaving) return;
-
-      isSaving = true;
-      const docId = getDocId(selectedDate);
-
-      try {
-        await db.collection('dailyData').doc(docId).set({
-          rows: currentData,
-          responsible: document.getElementById('responsiblePerson').value || '',
-          urgent: document.getElementById('urgentOperations').value || '',
-          locked: isLocked
-        }, { merge:true });
-
-        showToast('შენახულია ✓');
-      } catch (e) {
-        console.warn('Save error:', e);
-        showToast('შენახვა ვერ მოხერხდა');
-      } finally {
-        isSaving = false;
       }
     }
 
     function renderTable() {
       const tbody = document.getElementById('tableBody');
       tbody.innerHTML = '';
-      const editableClass = canEdit() ? 'editable' : '';
 
       for (let i = 0; i < currentData.length; i++) {
         const row = currentData[i];
+
+        // ✅ თითო სვეტზე edit უფლება ცალკე
+        const clsInitial   = canEditCell('initial')   ? 'editable' : '';
+        const clsAdmission = canEditCell('admission') ? 'editable' : '';
+        const clsDischarge = canEditCell('discharge') ? 'editable' : '';
+        const clsTransfer  = canEditCell('transfer')  ? 'editable' : '';
+        const clsMortality = canEditCell('mortality') ? 'editable' : '';
+
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td>${row.dept}</td>
-          <td class="${editableClass}" data-index="${i}" data-field="initial">${row.initial}</td>
-          <td class="${editableClass}" data-index="${i}" data-field="admission">${row.admission}</td>
-          <td class="${editableClass}" data-index="${i}" data-field="discharge">${row.discharge}</td>
-          <td class="${editableClass}" data-index="${i}" data-field="transfer">${row.transfer}</td>
-          <td class="${editableClass}" data-index="${i}" data-field="mortality">${row.mortality}</td>
+          <td class="${clsInitial}" data-index="${i}" data-field="initial">${row.initial}</td>
+          <td class="${clsAdmission}" data-index="${i}" data-field="admission">${row.admission}</td>
+          <td class="${clsDischarge}" data-index="${i}" data-field="discharge">${row.discharge}</td>
+          <td class="${clsTransfer}" data-index="${i}" data-field="transfer">${row.transfer}</td>
+          <td class="${clsMortality}" data-index="${i}" data-field="mortality">${row.mortality}</td>
           <td>${row.final}</td>
         `;
         tbody.appendChild(tr);
@@ -499,12 +494,15 @@
         const cell = e.target.closest('td');
         if (!cell) return;
         if (!cell.classList.contains('editable')) return;
-        if (!canEdit()) return;
-        if (cell.querySelector('input')) return;
 
         const idx = cell.dataset.index;
         const field = cell.dataset.field;
         if (idx === undefined || !field) return;
+
+        // ✅ ორმაგი დაცვა
+        if (!canEditCell(field)) return;
+
+        if (cell.querySelector('input')) return;
 
         const input = document.createElement('input');
         input.type = 'number';
@@ -535,8 +533,15 @@
     function setupExtraFields() {
       const rp = document.getElementById('responsiblePerson');
       const uo = document.getElementById('urgentOperations');
-      rp.addEventListener('input', () => { if (canEdit()) scheduleSave(); });
-      uo.addEventListener('input', () => { if (canEdit()) scheduleSave(); });
+
+      rp.addEventListener('input', () => {
+        if (isLocked && !isAdmin) return;
+        scheduleSave();
+      });
+      uo.addEventListener('input', () => {
+        if (isLocked && !isAdmin) return;
+        scheduleSave();
+      });
     }
 
     function updateLockButton() {
@@ -578,7 +583,7 @@
       const container = document.getElementById('calendarContainer');
       container.innerHTML = '';
 
-      const months = ['იანვარი','თებერვალი','მარტი','აპრილი','მაისი','ივნისი','ივლისი','აგვისტო','სექტემბერი','ოქტომბერი','ნოემბრი','დეკემბერი'];
+      const months = ['იანვარი','თებერვალი','მარტი','აპრილი','მაისი','ივნისი','ივლისი','აგვისტო','სექტემბერი','ოქტომბერი','ნოემბერი','დეკემბერი'];
       const today = new Date();
 
       for (let m = 0; m < 12; m++) {
@@ -621,6 +626,7 @@
 
               td.addEventListener('click', () => {
                 selectedDate = new Date(year, m, clickedDay);
+                document.getElementById('selectedDate').textContent = formatDate(selectedDate);
                 setView('table');
                 loadAllData();
               });
@@ -645,8 +651,8 @@
     function showCalendar() { setView('calendar'); renderCalendar(currentYear); }
     function prevYear() { currentYear--; renderCalendar(currentYear); }
     function nextYear() { currentYear++; renderCalendar(currentYear); }
-    function prevDay() { selectedDate.setDate(selectedDate.getDate() - 1); loadAllData(); }
-    function nextDay() { selectedDate.setDate(selectedDate.getDate() + 1); loadAllData(); }
+    function prevDay() { selectedDate.setDate(selectedDate.getDate() - 1); document.getElementById('selectedDate').textContent = formatDate(selectedDate); loadAllData(); }
+    function nextDay() { selectedDate.setDate(selectedDate.getDate() + 1); document.getElementById('selectedDate').textContent = formatDate(selectedDate); loadAllData(); }
     function exportPDF() { window.print(); }
 
     function sortTable(col) {
