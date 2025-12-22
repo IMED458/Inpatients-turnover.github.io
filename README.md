@@ -2,7 +2,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Inpatient Calendar</title>
+  <title>პაციენტთა ბრუნვა</title>
 
   <script src="/_sdk/element_sdk.js"></script>
 
@@ -71,8 +71,66 @@
     }
     .overlay.show { display:flex; }
 
+    /* Admin statistics panel */
+    .admin-panel {
+      max-width:1100px;
+      margin: 0 auto 16px auto;
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      padding: 16px;
+      display:none;
+    }
+    .admin-panel-header {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap: 10px;
+      flex-wrap:wrap;
+      margin-bottom:12px;
+    }
+    .admin-panel-title {
+      font-weight: 800;
+      color:#2c3e50;
+      font-size:16px;
+    }
+    .admin-panel-controls {
+      display:flex;
+      gap: 8px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
+    .select {
+      padding:10px 12px;
+      border:1px solid #ddd;
+      border-radius:8px;
+      background:white;
+      font-weight:600;
+      color:#2c3e50;
+      cursor:pointer;
+    }
+    .stats-grid {
+      display:grid;
+      grid-template-columns: repeat(3, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .stat-card {
+      border:1px solid #eee;
+      border-radius: 10px;
+      padding: 14px;
+      background: #fafafa;
+    }
+    .stat-label { color:#666; font-size:12px; margin-bottom:6px; }
+    .stat-value { font-size:28px; font-weight:800; color:#2c3e50; }
+    .stat-sub { margin-top:6px; color:#888; font-size:12px; }
+    .small-note { color:#777; font-size:12px; margin-top:10px; }
+
+    @media (max-width: 700px) {
+      .stats-grid { grid-template-columns: 1fr; }
+    }
+
     @media print {
-      .controls, #authView, #calendarView, .statusline { display:none !important; }
+      .controls, #authView, #calendarView, .statusline, .admin-panel { display:none !important; }
       #tableView { display:block !important; }
       .page-wrapper { padding:0; background:white; }
       body { background:white; }
@@ -108,16 +166,12 @@
           <span id="fbText">Firebase: შემოწმება...</span>
         </span>
       </div>
-
-      <p style="color:#666;font-size:13px;margin-top:14px;">
-       
-      </p>
     </div>
 
     <!-- Calendar -->
     <div id="calendarView" style="display:none;">
       <div class="header">
-        <h1>თსსუსა და ინგოროყვას კლინიკა</h1>
+        <h1>პაციენტთა ბრუნვა</h1>
         <h2 id="calendarTitle">2025 წლის კალენდარი</h2>
       </div>
       <div class="controls">
@@ -130,14 +184,47 @@
     <!-- Table -->
     <div id="tableView" style="display:none;">
       <div class="header">
-        <h1>თსსუსა და ინგოროყვას კლინიკა</h1>
+        <h1>პაციენტთა ბრუნვა</h1>
         <h2>Inpatients turnover - <span id="selectedDate">--.--.--</span></h2>
+
         <div class="statusline">
           <span class="pill">
             <span class="dot" id="fbDot2"></span>
             <span id="fbText2">Firebase: შემოწმება...</span>
           </span>
         </div>
+      </div>
+
+      <!-- Admin statistics (visible only for admin) -->
+      <div class="admin-panel" id="adminPanel">
+        <div class="admin-panel-header">
+          <div class="admin-panel-title">სტატისტიკა (თვე)</div>
+          <div class="admin-panel-controls">
+            <select class="select" id="statsMonth"></select>
+            <select class="select" id="statsYear"></select>
+            <button class="btn btn-nav" id="refreshStatsBtn" type="button">განახლება</button>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">თვეში შემოსული (Admission)</div>
+            <div class="stat-value" id="statAdmission">—</div>
+            <div class="stat-sub" id="statAdmissionSub">მხოლოდ: ზრდასრულთა ემერჯენსი + ბავშვთა ემერჯენსი</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">თვეში გაწერილი (Discharge)</div>
+            <div class="stat-value" id="statDischarge">—</div>
+            <div class="stat-sub" id="statDischargeSub">ჯამი ყველა დეპარტამენტზე</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">თვეში გარდაცვლილი (Mortality)</div>
+            <div class="stat-value" id="statMortality">—</div>
+            <div class="stat-sub" id="statMortalitySub">ჯამი ყველა დეპარტამენტზე</div>
+          </div>
+        </div>
+
+        <div class="small-note" id="statsNote"></div>
       </div>
 
       <div class="controls">
@@ -209,7 +296,6 @@
         try { if (firebase.analytics) firebase.analytics(); } catch (e) {}
         db = firebase.firestore();
 
-        // Optional offline cache
         try { db.enablePersistence({ synchronizeTabs:true }).catch(() => {}); } catch (e) {}
 
         setFbStatus(false, "Firebase: შემოწმება...");
@@ -234,7 +320,7 @@
     let isAdmin = false;
     let isLocked = false;
     let sortDirection = {};
-    let currentData = []; // rows
+    let currentData = [];
     let pendingSaveTimer = null;
     let isSaving = false;
 
@@ -282,13 +368,10 @@
       return (+row.initial||0) + (+row.admission||0) - (+row.discharge||0) - (+row.transfer||0) - (+row.mortality||0);
     }
 
-    // ✔ წერა ყველას შეუძლია, თუ დღე unlocked-ია
     function canWriteNow() {
       return !isLocked || isAdmin;
     }
 
-    // ✔ "საწყისი" (initial) — მხოლოდ admin-ს შეუძლია ხელით შეცვლა
-    //   (მაგრამ ჩვენ მაინც ავტომატურად ვწერთ prevFinal-ს, ამიტომ პრაქტიკულად edit იშვიათად დაგჭირდება)
     function canEditCell(field) {
       if (!canWriteNow()) return false;
       if (field === 'initial' && !isAdmin) return false;
@@ -297,9 +380,17 @@
 
     function updateLockButton() {
       const btn = document.getElementById('adminButton');
-      if (!isAdmin) { btn.style.display = 'none'; return; }
+      const panel = document.getElementById('adminPanel');
+
+      if (!isAdmin) {
+        btn.style.display = 'none';
+        if (panel) panel.style.display = 'none';
+        return;
+      }
+
       btn.style.display = 'inline-block';
       btn.textContent = isLocked ? 'განბლოკვა' : 'დაბლოკვა';
+      if (panel) panel.style.display = 'block';
     }
 
     function setTextareasDisabled() {
@@ -311,9 +402,7 @@
     // =========================
     // Cache (instant load)
     // =========================
-    function cacheKeyForDate(d) {
-      return `inpatients_cache_${getDocId(d)}`;
-    }
+    function cacheKeyForDate(d) { return `inpatients_cache_${getDocId(d)}`; }
 
     function saveCacheForDate(d, payload) {
       try { localStorage.setItem(cacheKeyForDate(d), JSON.stringify(payload)); } catch(e) {}
@@ -323,9 +412,7 @@
       try {
         const raw = localStorage.getItem(cacheKeyForDate(d));
         return raw ? JSON.parse(raw) : null;
-      } catch(e) {
-        return null;
-      }
+      } catch(e) { return null; }
     }
 
     function applyPayloadToUI(payload) {
@@ -369,17 +456,12 @@
     }
 
     function buildDeptListFromSources(todayDoc, prevDoc) {
-      // 1) Today rows
       if (todayDoc && Array.isArray(todayDoc.rows) && todayDoc.rows.length) {
         return todayDoc.rows.map(r => String(r.dept ?? '')).filter(Boolean);
       }
-      // 2) Prev rows
       if (prevDoc && Array.isArray(prevDoc.rows) && prevDoc.rows.length) {
         return prevDoc.rows.map(r => String(r.dept ?? '')).filter(Boolean);
       }
-      // 3) As a last fallback, keep an internal list (rarely used)
-      //    (შენ თქვი "განულებული არ მინდა" — აქ მხოლოდ dept-ების სიაა fallback,
-      //     ციფრებს მაინც Firebase-დან ან prevFinal-დან ავაგებთ)
       return [
         "ზრდასრულთა ემერჯენსი","ქირურგია","რეანიმაცია","კარდიორეანიმაცია","ბავშვთა ემერჯენსი","ბავშვთა რეანიმაცია",
         "ნევროლოგია","ნეიროქირურგია","ნეირორეანიმაცია","თორაკოქირურგია","ტრავმატოლოგია","ანგიოქირურგია",
@@ -452,7 +534,6 @@
           locked: !!isLocked
         }, { merge:true });
 
-        // update cache
         saveCacheForDate(selectedDate, {
           rows: currentData,
           responsible: document.getElementById('responsiblePerson').value || '',
@@ -476,43 +557,27 @@
 
       document.getElementById('selectedDate').textContent = formatDate(selectedDate);
 
-      // 1) Instant: show cache if exists (no zeros UI)
       const cached = loadCacheForDate(selectedDate);
-      if (cached) {
-        applyPayloadToUI(cached);
-      } else {
-        // თუ cache არაა, უბრალოდ overlay (არ ვაჩვენებთ ნულებს)
-        currentData = [];
-        renderTable();
-      }
+      if (cached) applyPayloadToUI(cached);
+      else { currentData = []; renderTable(); }
 
       showOverlay(true);
 
       try {
         const prevDate = dateMinusOneDay(selectedDate);
-
-        // 2) Read prev + today in parallel (prev may be locked -> still readable)
         const [prevDoc, todayDoc] = await Promise.all([
           readDayDoc(prevDate),
           readDayDoc(selectedDate)
         ]);
 
-        // 3) Build dept list from Firebase docs
         const depts = buildDeptListFromSources(todayDoc, prevDoc);
-
-        // 4) Build maps
         const prevFinalMap = mapPrevFinal(prevDoc);
         const todayMap = mapTodayRows(todayDoc);
 
-        // 5) Compose rows:
-        //    admission/discharge/transfer/mortality from today (if exists),
-        //    but initial ALWAYS from prev final (even if prev was locked)
         const rows = composeRowsForceInitial(depts, prevFinalMap, todayMap);
 
-        // 6) Locked flag is from TODAY doc (admin-managed). If today doc doesn't exist -> unlocked
         isLocked = todayDoc ? !!todayDoc.locked : false;
 
-        // 7) Textareas from today doc
         document.getElementById('responsiblePerson').value = todayDoc ? (todayDoc.responsible || '') : '';
         document.getElementById('urgentOperations').value = todayDoc ? (todayDoc.urgent || '') : '';
 
@@ -522,20 +587,21 @@
         setTextareasDisabled();
         renderTable();
 
-        // 8) IMPORTANT: write back the forced initial so that Firestore always stays updated
-        //    (but only if day isn't locked OR user is admin)
-        if (canWriteNow()) {
-          await saveAllData();
-          showToast('საწყისი განახლდა წინა დღის საბოლოოთი ✓');
-        }
+        if (canWriteNow()) await saveAllData();
 
-        // cache latest
         saveCacheForDate(selectedDate, {
           rows: currentData,
           responsible: document.getElementById('responsiblePerson').value || '',
           urgent: document.getElementById('urgentOperations').value || '',
           locked: !!isLocked
         });
+
+        if (isAdmin) {
+          const month = selectedDate.getMonth();
+          const year = selectedDate.getFullYear();
+          setStatsSelectors(month, year);
+          await computeMonthlyStats(year, month);
+        }
 
       } catch (e) {
         console.warn('Load error:', e);
@@ -552,7 +618,6 @@
       const tbody = document.getElementById('tableBody');
       tbody.innerHTML = '';
 
-      // If empty, show a small placeholder row
       if (!currentData || !currentData.length) {
         const tr = document.createElement('tr');
         tr.innerHTML = `<td colspan="7" style="text-align:center;color:#666;padding:18px;">მონაცემები არ არის ნაჩვენები (იტვირთება...)</td>`;
@@ -633,8 +698,6 @@
         const commit = () => {
           const val = Math.max(0, parseInt(input.value, 10) || 0);
           currentData[idx][field] = val;
-
-          // recompute final
           currentData[idx].final = computeFinal(currentData[idx]);
 
           renderTable();
@@ -783,6 +846,101 @@
     }
 
     // =========================
+    // Admin monthly statistics
+    // =========================
+    const monthNames = ['იანვარი','თებერვალი','მარტი','აპრილი','მაისი','ივნისი','ივლისი','აგვისტო','სექტემბერი','ოქტომბერი','ნოემბერი','დეკემბერი'];
+
+    // Departments for admission-only stats
+    const ADMISSION_DEPTS_ONLY = new Set(["ზრდასრულთა ემერჯენსი", "ბავშვთა ემერჯენსი"]);
+
+    function setStatsSelectors(monthIndex, yearVal) {
+      const monthSel = document.getElementById('statsMonth');
+      const yearSel = document.getElementById('statsYear');
+      if (!monthSel || !yearSel) return;
+
+      if (!monthSel.options.length) {
+        monthNames.forEach((m, i) => {
+          const opt = document.createElement('option');
+          opt.value = String(i);
+          opt.textContent = m;
+          monthSel.appendChild(opt);
+        });
+      }
+
+      if (!yearSel.options.length) {
+        const base = new Date().getFullYear();
+        for (let y = base - 3; y <= base + 3; y++) {
+          const opt = document.createElement('option');
+          opt.value = String(y);
+          opt.textContent = String(y);
+          yearSel.appendChild(opt);
+        }
+      }
+
+      monthSel.value = String(monthIndex);
+      yearSel.value = String(yearVal);
+    }
+
+    function setStatsLoading(on) {
+      const a = document.getElementById('statAdmission');
+      const d = document.getElementById('statDischarge');
+      const m = document.getElementById('statMortality');
+      if (!a || !d || !m) return;
+      if (on) { a.textContent = '...'; d.textContent = '...'; m.textContent = '...'; }
+    }
+
+    async function computeMonthlyStats(year, monthIndex) {
+      if (!db) return;
+      setStatsLoading(true);
+
+      const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+
+      let totalAdmission = 0;  // ONLY 2 depts
+      let totalDischarge = 0;  // ALL depts
+      let totalMortality = 0;  // ALL depts
+
+      const ids = [];
+      for (let day = 1; day <= daysInMonth; day++) {
+        ids.push(getDocId(new Date(year, monthIndex, day)));
+      }
+
+      const batchSize = 10;
+      for (let i = 0; i < ids.length; i += batchSize) {
+        const chunk = ids.slice(i, i + batchSize);
+        const snaps = await Promise.all(
+          chunk.map(id => db.collection('dailyData').doc(id).get().catch(() => null))
+        );
+
+        snaps.forEach(snap => {
+          if (!snap || !snap.exists) return;
+          const data = snap.data() || {};
+          const rows = Array.isArray(data.rows) ? data.rows : [];
+
+          for (const r of rows) {
+            const dept = String(r.dept || '');
+            // admission: ONLY ER depts
+            if (ADMISSION_DEPTS_ONLY.has(dept)) {
+              totalAdmission += (+r.admission || 0);
+            }
+            // discharge + mortality: ALL depts
+            totalDischarge += (+r.discharge || 0);
+            totalMortality += (+r.mortality || 0);
+          }
+        });
+      }
+
+      document.getElementById('statAdmission').textContent = String(totalAdmission);
+      document.getElementById('statDischarge').textContent = String(totalDischarge);
+      document.getElementById('statMortality').textContent = String(totalMortality);
+
+      const note = document.getElementById('statsNote');
+      if (note) {
+        note.textContent =
+          `სტატისტიკა: ${monthNames[monthIndex]} ${year} — Admission ითვლის მხოლოდ: ზრდასრულთა ემერჯენსი + ბავშვთა ემერჯენსი; Discharge/Mortality ითვლის ყველა დეპარტამენტზე.`;
+      }
+    }
+
+    // =========================
     // Auth (password gate only)
     // =========================
     function checkPassword() {
@@ -808,19 +966,43 @@
       document.getElementById('loginBtn').addEventListener('click', checkPassword);
       document.getElementById('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') checkPassword(); });
 
-      document.getElementById('prevYearBtn').addEventListener('click', prevYear);
-      document.getElementById('nextYearBtn').addEventListener('click', nextYear);
+      document.getElementById('prevYearBtn').addEventListener('click', () => { currentYear--; renderCalendar(currentYear); });
+      document.getElementById('nextYearBtn').addEventListener('click', () => { currentYear++; renderCalendar(currentYear); });
 
-      document.getElementById('exportBtn').addEventListener('click', exportPDF);
+      document.getElementById('exportBtn').addEventListener('click', () => window.print());
       document.getElementById('prevDayBtn').addEventListener('click', prevDay);
       document.getElementById('nextDayBtn').addEventListener('click', nextDay);
-      document.getElementById('showCalendarBtn').addEventListener('click', showCalendar);
+      document.getElementById('showCalendarBtn').addEventListener('click', () => { setView('calendar'); renderCalendar(currentYear); });
 
       document.getElementById('adminButton').addEventListener('click', toggleLock);
 
       document.querySelectorAll('#dataTable thead th').forEach(th => {
         th.addEventListener('click', () => sortTable(parseInt(th.dataset.col, 10)));
       });
+
+      // Admin stats events
+      const monthSel = document.getElementById('statsMonth');
+      const yearSel = document.getElementById('statsYear');
+      const refreshBtn = document.getElementById('refreshStatsBtn');
+
+      if (refreshBtn) {
+        refreshBtn.addEventListener('click', async () => {
+          if (!isAdmin) return;
+          await computeMonthlyStats(parseInt(yearSel.value, 10), parseInt(monthSel.value, 10));
+        });
+      }
+      if (monthSel) {
+        monthSel.addEventListener('change', async () => {
+          if (!isAdmin) return;
+          await computeMonthlyStats(parseInt(yearSel.value, 10), parseInt(monthSel.value, 10));
+        });
+      }
+      if (yearSel) {
+        yearSel.addEventListener('change', async () => {
+          if (!isAdmin) return;
+          await computeMonthlyStats(parseInt(yearSel.value, 10), parseInt(monthSel.value, 10));
+        });
+      }
 
       setupTableEditing();
       setupExtraFields();
