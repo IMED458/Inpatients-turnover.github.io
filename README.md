@@ -4,6 +4,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>პაციენტთა ბრუნვა</title>
 
+  <!-- Favicon (Tab / Bookmark logo) -->
+  <link rel="icon" type="image/png" href="tm_center_logo12.png">
+
   <script src="/_sdk/element_sdk.js"></script>
 
   <!-- Firebase (Compat) -->
@@ -806,24 +809,9 @@
       }
     }
 
-    function showCalendar() { setView('calendar'); renderCalendar(currentYear); }
-    function prevYear() { currentYear--; renderCalendar(currentYear); }
-    function nextYear() { currentYear++; renderCalendar(currentYear); }
-
-    function prevDay() {
-      selectedDate.setDate(selectedDate.getDate() - 1);
-      document.getElementById('selectedDate').textContent = formatDate(selectedDate);
-      loadAllData();
-    }
-
-    function nextDay() {
-      selectedDate.setDate(selectedDate.getDate() + 1);
-      document.getElementById('selectedDate').textContent = formatDate(selectedDate);
-      loadAllData();
-    }
-
-    function exportPDF() { window.print(); }
-
+    // =========================
+    // Sorting
+    // =========================
     function sortTable(col) {
       sortDirection[col] = (sortDirection[col] === 'asc') ? 'desc' : 'asc';
       const dir = sortDirection[col];
@@ -849,8 +837,6 @@
     // Admin monthly statistics
     // =========================
     const monthNames = ['იანვარი','თებერვალი','მარტი','აპრილი','მაისი','ივნისი','ივლისი','აგვისტო','სექტემბერი','ოქტომბერი','ნოემბერი','დეკემბერი'];
-
-    // Departments for admission-only stats
     const ADMISSION_DEPTS_ONLY = new Set(["ზრდასრულთა ემერჯენსი", "ბავშვთა ემერჯენსი"]);
 
     function setStatsSelectors(monthIndex, yearVal) {
@@ -918,11 +904,7 @@
 
           for (const r of rows) {
             const dept = String(r.dept || '');
-            // admission: ONLY ER depts
-            if (ADMISSION_DEPTS_ONLY.has(dept)) {
-              totalAdmission += (+r.admission || 0);
-            }
-            // discharge + mortality: ALL depts
+            if (ADMISSION_DEPTS_ONLY.has(dept)) totalAdmission += (+r.admission || 0);
             totalDischarge += (+r.discharge || 0);
             totalMortality += (+r.mortality || 0);
           }
@@ -970,8 +952,8 @@
       document.getElementById('nextYearBtn').addEventListener('click', () => { currentYear++; renderCalendar(currentYear); });
 
       document.getElementById('exportBtn').addEventListener('click', () => window.print());
-      document.getElementById('prevDayBtn').addEventListener('click', prevDay);
-      document.getElementById('nextDayBtn').addEventListener('click', nextDay);
+      document.getElementById('prevDayBtn').addEventListener('click', () => { selectedDate.setDate(selectedDate.getDate() - 1); document.getElementById('selectedDate').textContent = formatDate(selectedDate); loadAllData(); });
+      document.getElementById('nextDayBtn').addEventListener('click', () => { selectedDate.setDate(selectedDate.getDate() + 1); document.getElementById('selectedDate').textContent = formatDate(selectedDate); loadAllData(); });
       document.getElementById('showCalendarBtn').addEventListener('click', () => { setView('calendar'); renderCalendar(currentYear); });
 
       document.getElementById('adminButton').addEventListener('click', toggleLock);
