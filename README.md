@@ -4,9 +4,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>პაციენტთა ბრუნვა</title>
 
-  <!-- Favicon (Tab / Bookmark logo) -->
   <link rel="icon" type="image/png" href="tm_center_logo12.png">
-
   <script src="/_sdk/element_sdk.js"></script>
 
   <!-- Firebase (Compat) -->
@@ -31,7 +29,7 @@
 
     .table-container { background:white; padding:20px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.1); overflow-x:auto; position:relative; }
     table { width:100%; border-collapse:collapse; border:3px solid #2c5f2d; }
-    th { background:#2c5f2d; color:white; padding:12px 8px; text-align:center; cursor:pointer; user-select:none; }
+    th { background:#2c5f2d; color:white; padding:12px 8px; text-align:center; cursor:default; user-select:none; }
     td { padding:8px; border:1px solid #d0d0d0; text-align:center; }
     td:first-child { background:#dae8fc; text-align:left; padding-left:12px; font-weight:500; }
     td:nth-child(2), td:nth-child(3), td:nth-child(4), td:nth-child(5) { background:#fff4e6; }
@@ -74,7 +72,6 @@
     }
     .overlay.show { display:flex; }
 
-    /* Admin statistics panel */
     .admin-panel {
       max-width:1100px;
       margin: 0 auto 16px auto;
@@ -128,13 +125,10 @@
     .stat-sub { margin-top:6px; color:#888; font-size:12px; }
     .small-note { color:#777; font-size:12px; margin-top:10px; }
 
-    /* Small saving indicator */
     .save-indicator { margin-top:8px; font-size:12px; color:#666; text-align:center; }
     .save-indicator strong { color:#2c3e50; }
 
-    @media (max-width: 700px) {
-      .stats-grid { grid-template-columns: 1fr; }
-    }
+    @media (max-width: 700px) { .stats-grid { grid-template-columns: 1fr; } }
 
     @media print {
       .controls, #authView, #calendarView, .statusline, .admin-panel, .save-indicator { display:none !important; }
@@ -203,7 +197,7 @@
         <div class="save-indicator" id="saveIndicator">შენახვა: <strong>—</strong></div>
       </div>
 
-      <!-- Admin statistics (visible only for admin) -->
+      <!-- Admin statistics -->
       <div class="admin-panel" id="adminPanel">
         <div class="admin-panel-header">
           <div class="admin-panel-title">სტატისტიკა (თვე)</div>
@@ -249,13 +243,13 @@
         <table id="dataTable">
           <thead>
             <tr>
-              <th data-col="0">დეპარტამენტი</th>
-              <th data-col="1">საწყისი</th>
-              <th data-col="2">შემოსვლა</th>
-              <th data-col="3">გაწერა</th>
-              <th data-col="4">გადასვლა</th>
-              <th data-col="5">ლეტალობა</th>
-              <th data-col="6">საბოლოო</th>
+              <th>დეპარტამენტი</th>
+              <th>საწყისი</th>
+              <th>შემოსვლა</th>
+              <th>გაწერა</th>
+              <th>გადასვლა</th>
+              <th>ლეტალობა</th>
+              <th>საბოლოო</th>
             </tr>
           </thead>
           <tbody id="tableBody"></tbody>
@@ -314,7 +308,6 @@
         try { if (firebase.analytics) firebase.analytics(); } catch (e) {}
         db = firebase.firestore();
 
-        // Offline persistence (best effort)
         try { db.enablePersistence({ synchronizeTabs:true }).catch(() => {}); } catch (e) {}
 
         setFbStatus(false, "Firebase: შემოწმება...");
@@ -339,7 +332,7 @@
     let isAdmin = false;
     let isLocked = false;
 
-    // Stable dept order (never shrinks)
+    // ✅ ფიქსირებული რიგი — არასდროს იცვლება
     const BASE_DEPTS = [
       "ზრდასრულთა ემერჯენსი","ქირურგია","რეანიმაცია","კარდიორეანიმაცია","ბავშვთა ემერჯენსი","ბავშვთა რეანიმაცია",
       "ნევროლოგია","ნეიროქირურგია","ნეირორეანიმაცია","თორაკოქირურგია","ტრავმატოლოგია","ანგიოქირურგია",
@@ -351,15 +344,14 @@
     const ADMISSION_DEPTS_ONLY = new Set(["ზრდასრულთა ემერჯენსი", "ბავშვთა ემერჯენსი"]);
 
     // Store values by dept (NOT by index)
-    let deptOrder = [...BASE_DEPTS];
-    let dataByDept = new Map(); // dept -> {initial, admission, discharge, transfer, mortality}
-    let viewSort = { col: null, dir: 'asc' };
+    const deptOrder = [...BASE_DEPTS]; // ✅ ყოველთვის BASE_DEPTS-ის რიგით
+    let dataByDept = new Map();        // dept -> {initial, admission, discharge, transfer, mortality, initialManual}
 
     // Live listener
     let unsubscribeDay = null;
     let lastAppliedUpdatedAtMs = 0;
 
-    // Save queue (instant saves, no overlaps)
+    // Save queue
     let saveChain = Promise.resolve();
 
     // ==========================================================
@@ -410,11 +402,10 @@
       return (+v.initial||0) + (+v.admission||0) - (+v.discharge||0) - (+v.transfer||0) - (+v.mortality||0);
     }
 
-    function canWriteNow() {
-      // Admin can always write, even when locked
-      return isAdmin || !isLocked;
-    }
+    // ✅ Admin წერს locked დღეზეც
+    function canWriteNow() { return isAdmin || !isLocked; }
 
+    // ✅ "საწყისი" მხოლოდ Admin-ს
     function canEditCell(field) {
       if (!canWriteNow()) return false;
       if (field === 'initial' && !isAdmin) return false;
@@ -442,33 +433,6 @@
       document.getElementById('urgentOperations').disabled = disabled;
     }
 
-    function buildStableDeptOrder(todayRows, prevRows, storedOrder) {
-      const found = new Set();
-      const order = [];
-
-      function add(d) {
-        const k = safeDeptKey(d);
-        if (!k) return;
-        if (found.has(k)) return;
-        found.add(k);
-        order.push(k);
-      }
-
-      // 1) Stored order first (if exists)
-      if (Array.isArray(storedOrder) && storedOrder.length) storedOrder.forEach(add);
-      else BASE_DEPTS.forEach(add);
-
-      // 2) Ensure base depts present
-      BASE_DEPTS.forEach(add);
-
-      // 3) Ensure any extra depts from docs are included
-      (prevRows || []).forEach(r => add(r.dept));
-      (todayRows || []).forEach(r => add(r.dept));
-
-      return order;
-    }
-
-    // If a cell editor is open and user navigates, commit it immediately
     function commitAnyOpenEditor() {
       const input = document.querySelector('#tableBody input');
       if (!input) return;
@@ -480,10 +444,14 @@
       const field = td.dataset.field;
       if (!dept || !field) return;
 
-      const current = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0};
+      const current = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialManual:false};
       const val = Math.max(0, parseInt(input.value, 10) || 0);
-      dataByDept.set(dept, { ...current, [field]: val });
 
+      const next = { ...current, [field]: val };
+      // ✅ თუ admin ცვლის "საწყისი"-ს → მონიშნე manual, რომ აღარ გადაეწეროს next load-ზე
+      if (field === 'initial' && isAdmin) next.initialManual = true;
+
+      dataByDept.set(dept, next);
       renderTable();
     }
 
@@ -505,7 +473,8 @@
         admission: +r.admission || 0,
         discharge: +r.discharge || 0,
         transfer: +r.transfer || 0,
-        mortality: +r.mortality || 0
+        mortality: +r.mortality || 0,
+        initialManual: !!r.initialManual
       })).filter(r => r.dept);
     }
 
@@ -518,14 +487,14 @@
           admission: +v.admission || 0,
           discharge: +v.discharge || 0,
           transfer: +v.transfer || 0,
-          mortality: +v.mortality || 0
+          mortality: +v.mortality || 0,
+          initialManual: !!v.initialManual
         };
         row.final = computeFinal(row);
         return row;
       });
 
       return {
-        deptOrder: [...deptOrder],
         rows,
         responsible: document.getElementById('responsiblePerson').value || '',
         urgent: document.getElementById('urgentOperations').value || '',
@@ -544,7 +513,6 @@
 
       try {
         await db.collection('dailyData').doc(docId).set({
-          deptOrder: payload.deptOrder,
           rows: payload.rows,
           responsible: payload.responsible,
           urgent: payload.urgent,
@@ -564,50 +532,8 @@
       if (!db) return Promise.resolve();
       if (!canWriteNow()) return Promise.resolve();
 
-      saveChain = saveChain
-        .then(() => saveAllData())
-        .catch(() => {});
-
+      saveChain = saveChain.then(() => saveAllData()).catch(() => {});
       return saveChain;
-    }
-
-    function applyStateFromDoc(docData) {
-      if (!docData) return;
-
-      // Don't overwrite while user is editing a cell
-      const isEditingNow = !!document.querySelector('#tableBody input');
-      if (isEditingNow) return;
-
-      const todayRows = normalizeRowsFromDoc(docData);
-      const storedOrder = Array.isArray(docData.deptOrder) ? docData.deptOrder : null;
-
-      deptOrder = buildStableDeptOrder(todayRows, [], storedOrder);
-
-      const map = new Map();
-      todayRows.forEach(r => {
-        map.set(r.dept, {
-          initial: +r.initial || 0,
-          admission: +r.admission || 0,
-          discharge: +r.discharge || 0,
-          transfer: +r.transfer || 0,
-          mortality: +r.mortality || 0
-        });
-      });
-
-      deptOrder.forEach(dept => {
-        if (!map.has(dept)) map.set(dept, { initial:0, admission:0, discharge:0, transfer:0, mortality:0 });
-      });
-
-      dataByDept = map;
-
-      isLocked = !!docData.locked;
-
-      document.getElementById('responsiblePerson').value = docData.responsible || '';
-      document.getElementById('urgentOperations').value = docData.urgent || '';
-
-      updateLockButton();
-      setTextareasDisabled();
-      renderTable();
     }
 
     function detachLiveListener() {
@@ -629,7 +555,6 @@
           if (!snap.exists) return;
           const d = snap.data() || {};
 
-          // updatedAt
           let remoteMs = 0;
           try {
             if (d.updatedAt && typeof d.updatedAt.toDate === 'function') {
@@ -650,7 +575,10 @@
 
           if (!pending) setSaveIndicator('შენახულია ✓');
 
-          applyStateFromDoc(d);
+          // არ გადავაწეროთ როცა user ჩაწერაშია
+          if (document.querySelector('#tableBody input')) return;
+
+          applyDayDocToState(d);
         },
         (err) => {
           console.warn("Live listener error:", err);
@@ -659,38 +587,30 @@
       );
     }
 
-    // ==========================================================
-    // Forced initial logic (prev final -> today initial)
-    // ==========================================================
-    function buildStateFromPrevAndToday(prevDoc, todayDoc) {
-      const prevRows = normalizeRowsFromDoc(prevDoc);
-      const todayRows = normalizeRowsFromDoc(todayDoc);
-      const storedOrder = Array.isArray(todayDoc?.deptOrder) ? todayDoc.deptOrder : null;
+    function applyDayDocToState(todayDoc) {
+      const rows = normalizeRowsFromDoc(todayDoc);
 
-      deptOrder = buildStableDeptOrder(todayRows, prevRows, storedOrder);
+      // map saved rows by dept
+      const saved = new Map();
+      rows.forEach(r => saved.set(r.dept, r));
 
-      const prevFinal = new Map();
-      prevRows.forEach(r => prevFinal.set(r.dept, computeFinal(r)));
-
-      const todayMap = new Map();
-      todayRows.forEach(r => todayMap.set(r.dept, r));
-
-      dataByDept = new Map();
+      // ensure all depts exist (fixed order)
+      const nextMap = new Map();
       deptOrder.forEach(dept => {
-        const saved = todayMap.get(dept) || {};
-        const forcedInitial = prevFinal.has(dept) ? (+prevFinal.get(dept) || 0) : (+saved.initial || 0);
-
-        dataByDept.set(dept, {
-          initial: forcedInitial,
-          admission: +saved.admission || 0,
-          discharge: +saved.discharge || 0,
-          transfer: +saved.transfer || 0,
-          mortality: +saved.mortality || 0
+        const r = saved.get(dept);
+        nextMap.set(dept, {
+          initial: r ? r.initial : 0,
+          admission: r ? r.admission : 0,
+          discharge: r ? r.discharge : 0,
+          transfer: r ? r.transfer : 0,
+          mortality: r ? r.mortality : 0,
+          initialManual: r ? !!r.initialManual : false
         });
       });
 
-      isLocked = !!todayDoc?.locked;
+      dataByDept = nextMap;
 
+      isLocked = !!todayDoc?.locked;
       document.getElementById('responsiblePerson').value = todayDoc?.responsible || '';
       document.getElementById('urgentOperations').value = todayDoc?.urgent || '';
 
@@ -700,8 +620,62 @@
     }
 
     // ==========================================================
-    // Load logic (Firebase = source of truth)
+    // Load logic (prev final -> today initial; admin manual initial persists)
     // ==========================================================
+    function buildStateFromPrevAndToday(prevDoc, todayDoc) {
+      const prevRows = normalizeRowsFromDoc(prevDoc);
+      const todayRows = normalizeRowsFromDoc(todayDoc);
+
+      const prevFinal = new Map();
+      prevRows.forEach(r => prevFinal.set(r.dept, computeFinal(r)));
+
+      const todayMap = new Map();
+      todayRows.forEach(r => todayMap.set(r.dept, r));
+
+      const next = new Map();
+
+      deptOrder.forEach(dept => {
+        const saved = todayMap.get(dept);
+
+        // ✅ ლოგიკა:
+        // - თუ admin-მა ერთხელ შეცვალა "საწყისი" (initialManual=true) → ყოველთვის შეინარჩუნე saved.initial
+        // - სხვა შემთხვევაში → გამოიყენე წინა დღის final (თუ არსებობს), როგორც default
+        // - თუ წინა დღის final არ არსებობს → გამოიყენე saved.initial ან 0
+        let initialVal = 0;
+        let initialManual = false;
+
+        if (saved && saved.initialManual) {
+          initialVal = +saved.initial || 0;
+          initialManual = true;
+        } else if (prevFinal.has(dept)) {
+          initialVal = +prevFinal.get(dept) || 0;
+          initialManual = false;
+        } else {
+          initialVal = saved ? (+saved.initial || 0) : 0;
+          initialManual = saved ? !!saved.initialManual : false;
+        }
+
+        next.set(dept, {
+          initial: initialVal,
+          admission: saved ? (+saved.admission || 0) : 0,
+          discharge: saved ? (+saved.discharge || 0) : 0,
+          transfer: saved ? (+saved.transfer || 0) : 0,
+          mortality: saved ? (+saved.mortality || 0) : 0,
+          initialManual: initialManual
+        });
+      });
+
+      dataByDept = next;
+
+      isLocked = !!todayDoc?.locked;
+      document.getElementById('responsiblePerson').value = todayDoc?.responsible || '';
+      document.getElementById('urgentOperations').value = todayDoc?.urgent || '';
+
+      updateLockButton();
+      setTextareasDisabled();
+      renderTable();
+    }
+
     async function loadAllData() {
       if (!db) return;
 
@@ -720,7 +694,7 @@
 
         buildStateFromPrevAndToday(prevDoc, todayDoc);
 
-        // Ensure doc exists and baseline is saved (immediate)
+        // ✅ დარწმუნებით: დოკი არსებობს და შეინახა დაუყოვნებლივ
         await enqueueSaveNow();
 
         if (isAdmin) {
@@ -739,63 +713,16 @@
     }
 
     // ==========================================================
-    // Rendering & Editing (VIEW sort only)
+    // Render (fixed order only)
     // ==========================================================
-    function getViewRows() {
-      const rows = deptOrder.map(dept => {
-        const v = dataByDept.get(dept) || {};
-        const row = {
-          dept,
-          initial: +v.initial || 0,
-          admission: +v.admission || 0,
-          discharge: +v.discharge || 0,
-          transfer: +v.transfer || 0,
-          mortality: +v.mortality || 0
-        };
-        row.final = computeFinal(row);
-        return row;
-      });
-
-      if (viewSort.col === null) return rows;
-
-      const dir = viewSort.dir;
-      const col = viewSort.col;
-
-      const get = (r) => {
-        if (col === 0) return (r.dept || '').toLowerCase();
-        if (col === 1) return +r.initial || 0;
-        if (col === 2) return +r.admission || 0;
-        if (col === 3) return +r.discharge || 0;
-        if (col === 4) return +r.transfer || 0;
-        if (col === 5) return +r.mortality || 0;
-        if (col === 6) return +r.final || 0;
-        return 0;
-      };
-
-      rows.sort((a,b) => {
-        const A = get(a), B = get(b);
-        if (A === B) return 0;
-        if (dir === 'asc') return A > B ? 1 : -1;
-        return A < B ? 1 : -1;
-      });
-
-      return rows;
-    }
-
     function renderTable() {
       const tbody = document.getElementById('tableBody');
       tbody.innerHTML = '';
 
-      const rows = getViewRows();
+      for (const dept of deptOrder) {
+        const v = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialManual:false};
+        const finalVal = computeFinal(v);
 
-      if (!rows.length) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td colspan="7" style="text-align:center;color:#666;padding:18px;">მონაცემები არ არის ნაჩვენები</td>`;
-        tbody.appendChild(tr);
-        return;
-      }
-
-      for (const row of rows) {
         const clsInitial   = canEditCell('initial')   ? 'editable' : '';
         const clsAdmission = canEditCell('admission') ? 'editable' : '';
         const clsDischarge = canEditCell('discharge') ? 'editable' : '';
@@ -804,13 +731,13 @@
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td>${row.dept}</td>
-          <td class="${clsInitial}" data-dept="${row.dept}" data-field="initial">${row.initial}</td>
-          <td class="${clsAdmission}" data-dept="${row.dept}" data-field="admission">${row.admission}</td>
-          <td class="${clsDischarge}" data-dept="${row.dept}" data-field="discharge">${row.discharge}</td>
-          <td class="${clsTransfer}" data-dept="${row.dept}" data-field="transfer">${row.transfer}</td>
-          <td class="${clsMortality}" data-dept="${row.dept}" data-field="mortality">${row.mortality}</td>
-          <td>${row.final}</td>
+          <td>${dept}</td>
+          <td class="${clsInitial}" data-dept="${dept}" data-field="initial">${+v.initial || 0}</td>
+          <td class="${clsAdmission}" data-dept="${dept}" data-field="admission">${+v.admission || 0}</td>
+          <td class="${clsDischarge}" data-dept="${dept}" data-field="discharge">${+v.discharge || 0}</td>
+          <td class="${clsTransfer}" data-dept="${dept}" data-field="transfer">${+v.transfer || 0}</td>
+          <td class="${clsMortality}" data-dept="${dept}" data-field="mortality">${+v.mortality || 0}</td>
+          <td>${finalVal}</td>
         `;
         tbody.appendChild(tr);
       }
@@ -854,7 +781,7 @@
         if (!canEditCell(field)) return;
         if (cell.querySelector('input')) return;
 
-        const current = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0};
+        const current = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialManual:false};
 
         const input = document.createElement('input');
         input.type = 'number';
@@ -869,6 +796,10 @@
         const commit = async () => {
           const val = Math.max(0, parseInt(input.value, 10) || 0);
           const next = { ...current, [field]: val };
+
+          // ✅ Admin "საწყისი" ცვლილება აუცილებლად დამახსოვრდეს და აღარ გადაიწეროს prev final-ით
+          if (field === 'initial' && isAdmin) next.initialManual = true;
+
           dataByDept.set(dept, next);
 
           renderTable();
@@ -905,7 +836,7 @@
     }
 
     // ==========================================================
-    // Calendar navigation
+    // Calendar
     // ==========================================================
     function renderCalendar(year) {
       document.getElementById('calendarTitle').textContent = `${year} წლის კალენდარი`;
@@ -954,7 +885,6 @@
               }
 
               td.addEventListener('click', async () => {
-                // commit & save before leaving
                 commitAnyOpenEditor();
                 await enqueueSaveNow();
 
@@ -979,20 +909,6 @@
         div.appendChild(table);
         container.appendChild(div);
       }
-    }
-
-    // ==========================================================
-    // Sorting (VIEW ONLY)
-    // ==========================================================
-    function sortTable(col) {
-      if (viewSort.col === col) {
-        viewSort.dir = (viewSort.dir === 'asc') ? 'desc' : 'asc';
-      } else {
-        viewSort.col = col;
-        viewSort.dir = 'asc';
-      }
-      renderTable();
-      // no save on sort
     }
 
     // ==========================================================
@@ -1042,14 +958,12 @@
 
       const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
 
-      let totalAdmission = 0;  // ONLY 2 depts
-      let totalDischarge = 0;  // ALL depts
-      let totalMortality = 0;  // ALL depts
+      let totalAdmission = 0;
+      let totalDischarge = 0;
+      let totalMortality = 0;
 
       const ids = [];
-      for (let day = 1; day <= daysInMonth; day++) {
-        ids.push(getDocId(new Date(year, monthIndex, day)));
-      }
+      for (let day = 1; day <= daysInMonth; day++) ids.push(getDocId(new Date(year, monthIndex, day)));
 
       const batchSize = 10;
       for (let i = 0; i < ids.length; i += batchSize) {
@@ -1142,10 +1056,6 @@
 
       document.getElementById('adminButton').addEventListener('click', toggleLock);
 
-      document.querySelectorAll('#dataTable thead th').forEach(th => {
-        th.addEventListener('click', () => sortTable(parseInt(th.dataset.col, 10)));
-      });
-
       // Admin stats events
       const monthSel = document.getElementById('statsMonth');
       const yearSel = document.getElementById('statsYear');
@@ -1173,11 +1083,8 @@
       setupTableEditing();
       setupExtraFields();
 
-      window.addEventListener('beforeunload', async (e) => {
-        try {
-          commitAnyOpenEditor();
-          await enqueueSaveNow();
-        } catch(err) {}
+      window.addEventListener('beforeunload', async () => {
+        try { commitAnyOpenEditor(); await enqueueSaveNow(); } catch(e) {}
         detachLiveListener();
       });
 
