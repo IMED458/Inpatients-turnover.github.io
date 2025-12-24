@@ -332,7 +332,7 @@
     let isAdmin = false;
     let isLocked = false;
 
-    // ✅ ფიქსირებული რიგი — არასდროს იცვლება არც sort-ით, არც edit-ით, არც firebase-ით
+    // ✅ ფიქსირებული რიგი — არასდროს იცვლება
     const BASE_DEPTS = [
       "ზრდასრულთა ემერჯენსი","ქირურგია","რეანიმაცია","კარდიორეანიმაცია","ბავშვთა ემერჯენსი","ბავშვთა რეანიმაცია",
       "ნევროლოგია","ნეიროქირურგია","ნეირორეანიმაცია","თორაკოქირურგია","ტრავმატოლოგია","ანგიოქირურგია",
@@ -343,11 +343,8 @@
 
     const ADMISSION_DEPTS_ONLY = new Set(["ზრდასრულთა ემერჯენსი", "ბავშვთა ემერჯენსი"]);
 
-    // ✅ ფიქსირებული order (არასდროს იცვლება)
-    const deptOrder = [...BASE_DEPTS];
-
-    // dept -> values; initialEdited: admin-მა თუ შეცვალა "საწყისი"
-    let dataByDept = new Map(); // dept -> { initial, admission, discharge, transfer, mortality, initialEdited }
+    const deptOrder = [...BASE_DEPTS]; // ✅ ყოველთვის იგივე რიგი
+    let dataByDept = new Map();        // dept -> { initial, admission, discharge, transfer, mortality, initialEdited }
 
     // Live listener
     let unsubscribeDay = null;
@@ -386,9 +383,7 @@
       return `${day}.${month}.${year}`;
     }
 
-    function getDocId(date) {
-      return formatDate(date).replace(/\./g, '-');
-    }
+    function getDocId(date) { return formatDate(date).replace(/\./g, '-'); }
 
     function dateMinusOneDay(dateObj) {
       const d = new Date(dateObj.getTime());
@@ -433,28 +428,33 @@
       document.getElementById('urgentOperations').disabled = disabled;
     }
 
-    // Edit open input commit (does NOT change order)
-    function commitAnyOpenEditor() {
+    // ✅ მთავარი ფიქსი: თუ user გახსნილ input-ს ტოვებს (სხვა უჯრაზე კლიკით),
+    // ცვლილება არ დაიკარგოს — ჯერ დავაკომიტოთ და დავინახოთ FIREBASE-ზე.
+    function commitOpenEditorToState() {
       const input = document.querySelector('#tableBody input');
-      if (!input) return;
+      if (!input) return false;
 
       const td = input.closest('td');
-      if (!td) return;
+      if (!td) return false;
 
       const dept = safeDeptKey(td.dataset.dept);
       const field = td.dataset.field;
-      if (!dept || !field) return;
+      if (!dept || !field) return false;
 
-      const current = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false};
+      const base = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false};
       const val = Math.max(0, parseInt(input.value, 10) || 0);
 
-      const next = { ...current, [field]: val };
-
-      // ✅ admin თუ შეცვლის initial-ს → ვანიშნებთ initialEdited=true, რომ შემდეგშიც შენარჩუნდეს
+      const next = { ...base, [field]: val };
       if (field === 'initial' && isAdmin) next.initialEdited = true;
 
       dataByDept.set(dept, next);
       renderTable();
+      return true;
+    }
+
+    async function commitOpenEditorAndSave() {
+      const changed = commitOpenEditorToState();
+      if (changed) await enqueueSaveNow();
     }
 
     // ==========================================================
@@ -580,7 +580,6 @@
           // არ გადავაწეროთ როცა input გახსნილია
           if (document.querySelector('#tableBody input')) return;
 
-          // ✅ order არ იცვლება: renderTable() ყოველთვის deptOrder-ს მიყვება
           applyDayDocToState(d);
         },
         (err) => {
@@ -620,17 +619,15 @@
     }
 
     // ==========================================================
-    // Load logic (IMPORTANT: initial defaults from prev day final)
+    // Load logic (initial defaults from prev day final)
     // ==========================================================
     function buildStateFromPrevAndToday(prevDoc, todayDoc) {
       const prevRows = normalizeRowsFromDoc(prevDoc);
       const todayRows = normalizeRowsFromDoc(todayDoc);
 
-      // prevFinal per dept
       const prevFinal = new Map();
       prevRows.forEach(r => prevFinal.set(r.dept, computeFinal(r)));
 
-      // today saved
       const todayMap = new Map();
       todayRows.forEach(r => todayMap.set(r.dept, r));
 
@@ -639,13 +636,6 @@
       deptOrder.forEach(dept => {
         const saved = todayMap.get(dept);
 
-        // ✅ მოთხოვნა:
-        // - "საწყისი" უნდა მოდიოდეს წინა დღის საბოლოოდან (თუ არსებობს) ყოველთვის როგორც default
-        // - admin-ს აქვს edit უფლება და თუ შეცვალა, ის აუცილებლად შეინახოს
-        // ლოგიკა:
-        //   თუ saved.initialEdited=true -> ვაჩვენებთ saved.initial (admin override)
-        //   სხვა შემთხვევაში -> თუ prevFinal არის -> ვაჩვენებთ prevFinal
-        //   სხვა შემთხვევაში -> saved.initial ან 0
         let initialVal = 0;
         let initialEdited = false;
 
@@ -699,7 +689,7 @@
 
         buildStateFromPrevAndToday(prevDoc, todayDoc);
 
-        // ✅ შექმნას/განაახლოს დოკი დაუყოვნებლივ
+        // ✅ დოკის არსებობა + სინქი
         await enqueueSaveNow();
 
         if (isAdmin) {
@@ -772,12 +762,19 @@
       tbody.appendChild(totalRow);
     }
 
+    // ==========================================================
+    // Editing (FIXED: always commit previous cell first)
+    // ==========================================================
     function setupTableEditing() {
       const tbody = document.getElementById('tableBody');
 
-      tbody.addEventListener('click', (e) => {
+      tbody.addEventListener('click', async (e) => {
         const cell = e.target.closest('td');
         if (!cell) return;
+
+        // ✅ თუ სხვა input უკვე გახსნილია, ჯერ ის შევინახოთ!
+        await commitOpenEditorAndSave();
+
         if (!cell.classList.contains('editable')) return;
 
         const dept = safeDeptKey(cell.dataset.dept);
@@ -786,12 +783,12 @@
         if (!canEditCell(field)) return;
         if (cell.querySelector('input')) return;
 
-        const current = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false};
+        const base = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false};
 
         const input = document.createElement('input');
         input.type = 'number';
         input.min = '0';
-        input.value = String(Math.max(0, parseInt(current[field], 10) || 0));
+        input.value = String(Math.max(0, parseInt(base[field], 10) || 0));
 
         cell.textContent = '';
         cell.appendChild(input);
@@ -800,14 +797,16 @@
 
         const commit = async () => {
           const val = Math.max(0, parseInt(input.value, 10) || 0);
-          const next = { ...current, [field]: val };
 
-          // ✅ admin initial edit -> must persist
+          // ✅ commit-ის დროსაც ბაზას თავიდან ვიღებთ (რომ სხვა ველები არ გადავწეროთ)
+          const latest = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false};
+          const next = { ...latest, [field]: val };
+
           if (field === 'initial' && isAdmin) next.initialEdited = true;
 
           dataByDept.set(dept, next);
           renderTable();
-          await enqueueSaveNow(); // immediate
+          await enqueueSaveNow(); // ✅ დაუყოვნებლივი შენახვა ყველა ველზე
         };
 
         input.addEventListener('blur', () => { commit(); }, { once:true });
@@ -815,6 +814,14 @@
           if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
           if (ev.key === 'Escape') { renderTable(); }
         });
+      });
+
+      // ✅ კლიკი ცხრილის გარეთაც -> თუ input ღიაა, შეინახოს
+      document.addEventListener('mousedown', async (e) => {
+        const isInsideTable = !!e.target.closest('#dataTable');
+        if (!isInsideTable) {
+          await commitOpenEditorAndSave();
+        }
       });
     }
 
@@ -831,6 +838,7 @@
     // ==========================================================
     async function toggleLock() {
       if (!isAdmin) return;
+      await commitOpenEditorAndSave();
       isLocked = !isLocked;
       updateLockButton();
       setTextareasDisabled();
@@ -889,8 +897,7 @@
               }
 
               td.addEventListener('click', async () => {
-                commitAnyOpenEditor();
-                await enqueueSaveNow();
+                await commitOpenEditorAndSave();
 
                 selectedDate = new Date(year, m, clickedDay);
                 document.getElementById('selectedDate').textContent = formatDate(selectedDate);
@@ -1031,37 +1038,32 @@
       document.getElementById('prevYearBtn').addEventListener('click', () => { currentYear--; renderCalendar(currentYear); });
       document.getElementById('nextYearBtn').addEventListener('click', () => { currentYear++; renderCalendar(currentYear); });
 
-      document.getElementById('exportBtn').addEventListener('click', () => window.print());
+      document.getElementById('exportBtn').addEventListener('click', async () => {
+        await commitOpenEditorAndSave();
+        window.print();
+      });
 
       document.getElementById('prevDayBtn').addEventListener('click', async () => {
-        commitAnyOpenEditor();
-        await enqueueSaveNow();
-
+        await commitOpenEditorAndSave();
         selectedDate.setDate(selectedDate.getDate() - 1);
         document.getElementById('selectedDate').textContent = formatDate(selectedDate);
         await loadAllData();
       });
 
       document.getElementById('nextDayBtn').addEventListener('click', async () => {
-        commitAnyOpenEditor();
-        await enqueueSaveNow();
-
+        await commitOpenEditorAndSave();
         selectedDate.setDate(selectedDate.getDate() + 1);
         document.getElementById('selectedDate').textContent = formatDate(selectedDate);
         await loadAllData();
       });
 
       document.getElementById('showCalendarBtn').addEventListener('click', async () => {
-        commitAnyOpenEditor();
-        await enqueueSaveNow();
+        await commitOpenEditorAndSave();
         setView('calendar');
         renderCalendar(currentYear);
       });
 
       document.getElementById('adminButton').addEventListener('click', toggleLock);
-
-      // ✅ აღარანაირი sort/კლიკის listener ცხრილის სათაურებზე — რიგი მუდმივია
-      // (არც ერთ th-ზე არ ვამატებთ event listener-ს)
 
       // Admin stats events
       const monthSel = document.getElementById('statsMonth');
@@ -1091,7 +1093,7 @@
       setupExtraFields();
 
       window.addEventListener('beforeunload', async () => {
-        try { commitAnyOpenEditor(); await enqueueSaveNow(); } catch(e) {}
+        try { await commitOpenEditorAndSave(); } catch(e) {}
         detachLiveListener();
       });
 
