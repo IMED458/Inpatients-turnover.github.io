@@ -128,12 +128,16 @@
     .stat-sub { margin-top:6px; color:#888; font-size:12px; }
     .small-note { color:#777; font-size:12px; margin-top:10px; }
 
+    /* Small saving indicator */
+    .save-indicator { margin-top:8px; font-size:12px; color:#666; text-align:center; }
+    .save-indicator strong { color:#2c3e50; }
+
     @media (max-width: 700px) {
       .stats-grid { grid-template-columns: 1fr; }
     }
 
     @media print {
-      .controls, #authView, #calendarView, .statusline, .admin-panel { display:none !important; }
+      .controls, #authView, #calendarView, .statusline, .admin-panel, .save-indicator { display:none !important; }
       #tableView { display:block !important; }
       .page-wrapper { padding:0; background:white; }
       body { background:white; }
@@ -196,6 +200,7 @@
             <span id="fbText2">Firebase: შემოწმება...</span>
           </span>
         </div>
+        <div class="save-indicator" id="saveIndicator">შენახვა: <strong>—</strong></div>
       </div>
 
       <!-- Admin statistics (visible only for admin) -->
@@ -294,6 +299,12 @@
       if (txt2) txt2.textContent = text;
     }
 
+    function setSaveIndicator(text) {
+      const el = document.getElementById('saveIndicator');
+      if (!el) return;
+      el.innerHTML = `შენახვა: <strong>${text}</strong>`;
+    }
+
     function initFirebase() {
       try {
         if (!fbInited) {
@@ -303,7 +314,7 @@
         try { if (firebase.analytics) firebase.analytics(); } catch (e) {}
         db = firebase.firestore();
 
-        // Offline persistence for many devices (best effort)
+        // Offline persistence (best effort)
         try { db.enablePersistence({ synchronizeTabs:true }).catch(() => {}); } catch (e) {}
 
         setFbStatus(false, "Firebase: შემოწმება...");
@@ -344,13 +355,12 @@
     let dataByDept = new Map(); // dept -> {initial, admission, discharge, transfer, mortality}
     let viewSort = { col: null, dir: 'asc' };
 
-    // Debounced save
-    let pendingSaveTimer = null;
-    let isSaving = false;
-
     // Live listener
     let unsubscribeDay = null;
     let lastAppliedUpdatedAtMs = 0;
+
+    // Save queue (instant saves, no overlaps)
+    let saveChain = Promise.resolve();
 
     // ==========================================================
     // Helpers
@@ -401,7 +411,8 @@
     }
 
     function canWriteNow() {
-      return !isLocked || isAdmin;
+      // Admin can always write, even when locked
+      return isAdmin || !isLocked;
     }
 
     function canEditCell(field) {
@@ -432,7 +443,6 @@
     }
 
     function buildStableDeptOrder(todayRows, prevRows, storedOrder) {
-      // Use stored deptOrder from Firestore if available, but ensure it doesn't shrink
       const found = new Set();
       const order = [];
 
@@ -444,22 +454,37 @@
         order.push(k);
       }
 
-      // 1) Start with stored order (if exists)
-      if (Array.isArray(storedOrder) && storedOrder.length) {
-        storedOrder.forEach(add);
-      } else {
-        // fallback: base order
-        BASE_DEPTS.forEach(add);
-      }
+      // 1) Stored order first (if exists)
+      if (Array.isArray(storedOrder) && storedOrder.length) storedOrder.forEach(add);
+      else BASE_DEPTS.forEach(add);
 
-      // 2) Ensure BASE_DEPTS exist (and preserve base order positions as much as possible)
+      // 2) Ensure base depts present
       BASE_DEPTS.forEach(add);
 
-      // 3) Add any extra depts found in docs
+      // 3) Ensure any extra depts from docs are included
       (prevRows || []).forEach(r => add(r.dept));
       (todayRows || []).forEach(r => add(r.dept));
 
       return order;
+    }
+
+    // If a cell editor is open and user navigates, commit it immediately
+    function commitAnyOpenEditor() {
+      const input = document.querySelector('#tableBody input');
+      if (!input) return;
+
+      const td = input.closest('td');
+      if (!td) return;
+
+      const dept = safeDeptKey(td.dataset.dept);
+      const field = td.dataset.field;
+      if (!dept || !field) return;
+
+      const current = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0};
+      const val = Math.max(0, parseInt(input.value, 10) || 0);
+      dataByDept.set(dept, { ...current, [field]: val });
+
+      renderTable();
     }
 
     // ==========================================================
@@ -508,20 +533,56 @@
       };
     }
 
-    function applyStateFromDoc(docData, { fromRemote = false, preferNoOverwriteWhileEditing = true } = {}) {
+    async function saveAllData() {
+      if (!db) return;
+      if (!canWriteNow()) return;
+
+      const docId = getDocId(selectedDate);
+      const payload = exportPayloadForSave();
+
+      setSaveIndicator('ინახება...');
+
+      try {
+        await db.collection('dailyData').doc(docId).set({
+          deptOrder: payload.deptOrder,
+          rows: payload.rows,
+          responsible: payload.responsible,
+          urgent: payload.urgent,
+          locked: payload.locked,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge:true });
+
+        setSaveIndicator('შენახულია ✓');
+      } catch (e) {
+        console.warn('Save error:', e);
+        setSaveIndicator('შეცდომა ✗');
+        showToast('შენახვა ვერ მოხერხდა');
+      }
+    }
+
+    function enqueueSaveNow() {
+      if (!db) return Promise.resolve();
+      if (!canWriteNow()) return Promise.resolve();
+
+      saveChain = saveChain
+        .then(() => saveAllData())
+        .catch(() => {});
+
+      return saveChain;
+    }
+
+    function applyStateFromDoc(docData) {
       if (!docData) return;
 
-      // Avoid overwriting while user is editing an input
+      // Don't overwrite while user is editing a cell
       const isEditingNow = !!document.querySelector('#tableBody input');
-      if (preferNoOverwriteWhileEditing && isEditingNow) return;
+      if (isEditingNow) return;
 
       const todayRows = normalizeRowsFromDoc(docData);
       const storedOrder = Array.isArray(docData.deptOrder) ? docData.deptOrder : null;
 
-      // Build stable order
       deptOrder = buildStableDeptOrder(todayRows, [], storedOrder);
 
-      // Build map
       const map = new Map();
       todayRows.forEach(r => {
         map.set(r.dept, {
@@ -533,7 +594,6 @@
         });
       });
 
-      // Ensure every dept exists
       deptOrder.forEach(dept => {
         if (!map.has(dept)) map.set(dept, { initial:0, admission:0, discharge:0, transfer:0, mortality:0 });
       });
@@ -566,13 +626,10 @@
       unsubscribeDay = db.collection('dailyData').doc(docId).onSnapshot(
         { includeMetadataChanges: true },
         (snap) => {
-          if (!snap.exists) {
-            // doc may be created after forced-initial save
-            return;
-          }
+          if (!snap.exists) return;
           const d = snap.data() || {};
 
-          // Firestore updatedAt -> ms
+          // updatedAt
           let remoteMs = 0;
           try {
             if (d.updatedAt && typeof d.updatedAt.toDate === 'function') {
@@ -580,60 +637,26 @@
             }
           } catch(e) {}
 
-          // Avoid older overwrite
           if (remoteMs && remoteMs < lastAppliedUpdatedAtMs) return;
           if (remoteMs) lastAppliedUpdatedAtMs = remoteMs;
 
-          // Status
           const fromCache = !!snap.metadata.fromCache;
           const pending = !!snap.metadata.hasPendingWrites;
+
           setFbStatus(true, pending
             ? "Firebase: ინახება..."
             : (fromCache ? "Firebase: ქეშიდან (offline)" : "Firebase: სინქრონიზებულია ✓")
           );
 
-          applyStateFromDoc(d, { fromRemote:true, preferNoOverwriteWhileEditing:true });
+          if (!pending) setSaveIndicator('შენახულია ✓');
+
+          applyStateFromDoc(d);
         },
         (err) => {
           console.warn("Live listener error:", err);
           setFbStatus(false, "Firebase: შეცდომა ✗");
         }
       );
-    }
-
-    function scheduleSave() {
-      if (!db) return;
-      if (!canWriteNow()) return;
-      if (pendingSaveTimer) clearTimeout(pendingSaveTimer);
-      pendingSaveTimer = setTimeout(saveAllData, 350);
-    }
-
-    async function saveAllData() {
-      if (!db) return;
-      if (!canWriteNow()) return;
-      if (isSaving) return;
-      isSaving = true;
-
-      const docId = getDocId(selectedDate);
-
-      try {
-        const payload = exportPayloadForSave();
-
-        await db.collection('dailyData').doc(docId).set({
-          deptOrder: payload.deptOrder,
-          rows: payload.rows,
-          responsible: payload.responsible,
-          urgent: payload.urgent,
-          locked: payload.locked,
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge:true });
-
-      } catch (e) {
-        console.warn('Save error:', e);
-        showToast('შენახვა ვერ მოხერხდა');
-      } finally {
-        isSaving = false;
-      }
     }
 
     // ==========================================================
@@ -644,14 +667,11 @@
       const todayRows = normalizeRowsFromDoc(todayDoc);
       const storedOrder = Array.isArray(todayDoc?.deptOrder) ? todayDoc.deptOrder : null;
 
-      // stable order
       deptOrder = buildStableDeptOrder(todayRows, prevRows, storedOrder);
 
-      // prev final map
       const prevFinal = new Map();
       prevRows.forEach(r => prevFinal.set(r.dept, computeFinal(r)));
 
-      // today map
       const todayMap = new Map();
       todayRows.forEach(r => todayMap.set(r.dept, r));
 
@@ -680,19 +700,18 @@
     }
 
     // ==========================================================
-    // Load logic (Firebase source of truth)
+    // Load logic (Firebase = source of truth)
     // ==========================================================
     async function loadAllData() {
       if (!db) return;
 
       document.getElementById('selectedDate').textContent = formatDate(selectedDate);
       showOverlay(true);
+      setSaveIndicator('—');
 
       try {
-        // Live sync immediately
         attachLiveListener();
 
-        // Build forced initial baseline from prev + today
         const prevDate = dateMinusOneDay(selectedDate);
         const [prevDoc, todayDoc] = await Promise.all([
           readDayDoc(prevDate),
@@ -701,10 +720,8 @@
 
         buildStateFromPrevAndToday(prevDoc, todayDoc);
 
-        // Ensure today's doc exists & has forced initial (writes to Firestore)
-        if (canWriteNow()) {
-          await saveAllData();
-        }
+        // Ensure doc exists and baseline is saved (immediate)
+        await enqueueSaveNow();
 
         if (isAdmin) {
           const month = selectedDate.getMonth();
@@ -849,16 +866,16 @@
         input.focus();
         input.select();
 
-        const commit = () => {
+        const commit = async () => {
           const val = Math.max(0, parseInt(input.value, 10) || 0);
           const next = { ...current, [field]: val };
           dataByDept.set(dept, next);
 
           renderTable();
-          scheduleSave();
+          await enqueueSaveNow(); // immediate save
         };
 
-        input.addEventListener('blur', commit, { once:true });
+        input.addEventListener('blur', () => { commit(); }, { once:true });
         input.addEventListener('keydown', (ev) => {
           if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
           if (ev.key === 'Escape') { renderTable(); }
@@ -870,8 +887,8 @@
       const rp = document.getElementById('responsiblePerson');
       const uo = document.getElementById('urgentOperations');
 
-      rp.addEventListener('input', () => { if (!canWriteNow()) return; scheduleSave(); });
-      uo.addEventListener('input', () => { if (!canWriteNow()) return; scheduleSave(); });
+      rp.addEventListener('input', () => { if (!canWriteNow()) return; enqueueSaveNow(); });
+      uo.addEventListener('input', () => { if (!canWriteNow()) return; enqueueSaveNow(); });
     }
 
     // ==========================================================
@@ -883,12 +900,12 @@
       updateLockButton();
       setTextareasDisabled();
       renderTable();
-      await saveAllData();
+      await enqueueSaveNow();
       showToast(isLocked ? 'დღე დაიბლოკა' : 'დღე განიბლოკა');
     }
 
     // ==========================================================
-    // Calendar
+    // Calendar navigation
     // ==========================================================
     function renderCalendar(year) {
       document.getElementById('calendarTitle').textContent = `${year} წლის კალენდარი`;
@@ -936,11 +953,15 @@
                 td.classList.add('today');
               }
 
-              td.addEventListener('click', () => {
+              td.addEventListener('click', async () => {
+                // commit & save before leaving
+                commitAnyOpenEditor();
+                await enqueueSaveNow();
+
                 selectedDate = new Date(year, m, clickedDay);
                 document.getElementById('selectedDate').textContent = formatDate(selectedDate);
                 setView('table');
-                loadAllData();
+                await loadAllData();
               });
 
               dayNum++;
@@ -1084,6 +1105,7 @@
     // ==========================================================
     function setupUI() {
       initFirebase();
+      setSaveIndicator('—');
 
       document.getElementById('loginBtn').addEventListener('click', checkPassword);
       document.getElementById('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') checkPassword(); });
@@ -1093,19 +1115,27 @@
 
       document.getElementById('exportBtn').addEventListener('click', () => window.print());
 
-      document.getElementById('prevDayBtn').addEventListener('click', () => {
+      document.getElementById('prevDayBtn').addEventListener('click', async () => {
+        commitAnyOpenEditor();
+        await enqueueSaveNow();
+
         selectedDate.setDate(selectedDate.getDate() - 1);
         document.getElementById('selectedDate').textContent = formatDate(selectedDate);
-        loadAllData();
+        await loadAllData();
       });
 
-      document.getElementById('nextDayBtn').addEventListener('click', () => {
+      document.getElementById('nextDayBtn').addEventListener('click', async () => {
+        commitAnyOpenEditor();
+        await enqueueSaveNow();
+
         selectedDate.setDate(selectedDate.getDate() + 1);
         document.getElementById('selectedDate').textContent = formatDate(selectedDate);
-        loadAllData();
+        await loadAllData();
       });
 
-      document.getElementById('showCalendarBtn').addEventListener('click', () => {
+      document.getElementById('showCalendarBtn').addEventListener('click', async () => {
+        commitAnyOpenEditor();
+        await enqueueSaveNow();
         setView('calendar');
         renderCalendar(currentYear);
       });
@@ -1143,7 +1173,11 @@
       setupTableEditing();
       setupExtraFields();
 
-      window.addEventListener('beforeunload', () => {
+      window.addEventListener('beforeunload', async (e) => {
+        try {
+          commitAnyOpenEditor();
+          await enqueueSaveNow();
+        } catch(err) {}
         detachLiveListener();
       });
 
