@@ -332,7 +332,7 @@
     let isAdmin = false;
     let isLocked = false;
 
-    // ✅ ფიქსირებული რიგი — არასდროს იცვლება
+    // ✅ ფიქსირებული რიგი — არასდროს იცვლება არც sort-ით, არც edit-ით, არც firebase-ით
     const BASE_DEPTS = [
       "ზრდასრულთა ემერჯენსი","ქირურგია","რეანიმაცია","კარდიორეანიმაცია","ბავშვთა ემერჯენსი","ბავშვთა რეანიმაცია",
       "ნევროლოგია","ნეიროქირურგია","ნეირორეანიმაცია","თორაკოქირურგია","ტრავმატოლოგია","ანგიოქირურგია",
@@ -343,9 +343,11 @@
 
     const ADMISSION_DEPTS_ONLY = new Set(["ზრდასრულთა ემერჯენსი", "ბავშვთა ემერჯენსი"]);
 
-    // Store values by dept (NOT by index)
-    const deptOrder = [...BASE_DEPTS]; // ✅ ყოველთვის BASE_DEPTS-ის რიგით
-    let dataByDept = new Map();        // dept -> {initial, admission, discharge, transfer, mortality, initialManual}
+    // ✅ ფიქსირებული order (არასდროს იცვლება)
+    const deptOrder = [...BASE_DEPTS];
+
+    // dept -> values; initialEdited: admin-მა თუ შეცვალა "საწყისი"
+    let dataByDept = new Map(); // dept -> { initial, admission, discharge, transfer, mortality, initialEdited }
 
     // Live listener
     let unsubscribeDay = null;
@@ -394,9 +396,7 @@
       return d;
     }
 
-    function safeDeptKey(s) {
-      return String(s || '').trim();
-    }
+    function safeDeptKey(s) { return String(s || '').trim(); }
 
     function computeFinal(v) {
       return (+v.initial||0) + (+v.admission||0) - (+v.discharge||0) - (+v.transfer||0) - (+v.mortality||0);
@@ -433,6 +433,7 @@
       document.getElementById('urgentOperations').disabled = disabled;
     }
 
+    // Edit open input commit (does NOT change order)
     function commitAnyOpenEditor() {
       const input = document.querySelector('#tableBody input');
       if (!input) return;
@@ -444,12 +445,13 @@
       const field = td.dataset.field;
       if (!dept || !field) return;
 
-      const current = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialManual:false};
+      const current = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false};
       const val = Math.max(0, parseInt(input.value, 10) || 0);
 
       const next = { ...current, [field]: val };
-      // ✅ თუ admin ცვლის "საწყისი"-ს → მონიშნე manual, რომ აღარ გადაეწეროს next load-ზე
-      if (field === 'initial' && isAdmin) next.initialManual = true;
+
+      // ✅ admin თუ შეცვლის initial-ს → ვანიშნებთ initialEdited=true, რომ შემდეგშიც შენარჩუნდეს
+      if (field === 'initial' && isAdmin) next.initialEdited = true;
 
       dataByDept.set(dept, next);
       renderTable();
@@ -474,7 +476,7 @@
         discharge: +r.discharge || 0,
         transfer: +r.transfer || 0,
         mortality: +r.mortality || 0,
-        initialManual: !!r.initialManual
+        initialEdited: !!r.initialEdited
       })).filter(r => r.dept);
     }
 
@@ -488,7 +490,7 @@
           discharge: +v.discharge || 0,
           transfer: +v.transfer || 0,
           mortality: +v.mortality || 0,
-          initialManual: !!v.initialManual
+          initialEdited: !!v.initialEdited
         };
         row.final = computeFinal(row);
         return row;
@@ -575,9 +577,10 @@
 
           if (!pending) setSaveIndicator('შენახულია ✓');
 
-          // არ გადავაწეროთ როცა user ჩაწერაშია
+          // არ გადავაწეროთ როცა input გახსნილია
           if (document.querySelector('#tableBody input')) return;
 
+          // ✅ order არ იცვლება: renderTable() ყოველთვის deptOrder-ს მიყვება
           applyDayDocToState(d);
         },
         (err) => {
@@ -589,12 +592,9 @@
 
     function applyDayDocToState(todayDoc) {
       const rows = normalizeRowsFromDoc(todayDoc);
-
-      // map saved rows by dept
       const saved = new Map();
       rows.forEach(r => saved.set(r.dept, r));
 
-      // ensure all depts exist (fixed order)
       const nextMap = new Map();
       deptOrder.forEach(dept => {
         const r = saved.get(dept);
@@ -604,7 +604,7 @@
           discharge: r ? r.discharge : 0,
           transfer: r ? r.transfer : 0,
           mortality: r ? r.mortality : 0,
-          initialManual: r ? !!r.initialManual : false
+          initialEdited: r ? !!r.initialEdited : false
         });
       });
 
@@ -620,15 +620,17 @@
     }
 
     // ==========================================================
-    // Load logic (prev final -> today initial; admin manual initial persists)
+    // Load logic (IMPORTANT: initial defaults from prev day final)
     // ==========================================================
     function buildStateFromPrevAndToday(prevDoc, todayDoc) {
       const prevRows = normalizeRowsFromDoc(prevDoc);
       const todayRows = normalizeRowsFromDoc(todayDoc);
 
+      // prevFinal per dept
       const prevFinal = new Map();
       prevRows.forEach(r => prevFinal.set(r.dept, computeFinal(r)));
 
+      // today saved
       const todayMap = new Map();
       todayRows.forEach(r => todayMap.set(r.dept, r));
 
@@ -637,22 +639,25 @@
       deptOrder.forEach(dept => {
         const saved = todayMap.get(dept);
 
-        // ✅ ლოგიკა:
-        // - თუ admin-მა ერთხელ შეცვალა "საწყისი" (initialManual=true) → ყოველთვის შეინარჩუნე saved.initial
-        // - სხვა შემთხვევაში → გამოიყენე წინა დღის final (თუ არსებობს), როგორც default
-        // - თუ წინა დღის final არ არსებობს → გამოიყენე saved.initial ან 0
+        // ✅ მოთხოვნა:
+        // - "საწყისი" უნდა მოდიოდეს წინა დღის საბოლოოდან (თუ არსებობს) ყოველთვის როგორც default
+        // - admin-ს აქვს edit უფლება და თუ შეცვალა, ის აუცილებლად შეინახოს
+        // ლოგიკა:
+        //   თუ saved.initialEdited=true -> ვაჩვენებთ saved.initial (admin override)
+        //   სხვა შემთხვევაში -> თუ prevFinal არის -> ვაჩვენებთ prevFinal
+        //   სხვა შემთხვევაში -> saved.initial ან 0
         let initialVal = 0;
-        let initialManual = false;
+        let initialEdited = false;
 
-        if (saved && saved.initialManual) {
+        if (saved && saved.initialEdited) {
           initialVal = +saved.initial || 0;
-          initialManual = true;
+          initialEdited = true;
         } else if (prevFinal.has(dept)) {
           initialVal = +prevFinal.get(dept) || 0;
-          initialManual = false;
+          initialEdited = false;
         } else {
           initialVal = saved ? (+saved.initial || 0) : 0;
-          initialManual = saved ? !!saved.initialManual : false;
+          initialEdited = saved ? !!saved.initialEdited : false;
         }
 
         next.set(dept, {
@@ -661,7 +666,7 @@
           discharge: saved ? (+saved.discharge || 0) : 0,
           transfer: saved ? (+saved.transfer || 0) : 0,
           mortality: saved ? (+saved.mortality || 0) : 0,
-          initialManual: initialManual
+          initialEdited: initialEdited
         });
       });
 
@@ -694,7 +699,7 @@
 
         buildStateFromPrevAndToday(prevDoc, todayDoc);
 
-        // ✅ დარწმუნებით: დოკი არსებობს და შეინახა დაუყოვნებლივ
+        // ✅ შექმნას/განაახლოს დოკი დაუყოვნებლივ
         await enqueueSaveNow();
 
         if (isAdmin) {
@@ -713,14 +718,14 @@
     }
 
     // ==========================================================
-    // Render (fixed order only)
+    // Render (fixed order only — NEVER changes)
     // ==========================================================
     function renderTable() {
       const tbody = document.getElementById('tableBody');
       tbody.innerHTML = '';
 
       for (const dept of deptOrder) {
-        const v = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialManual:false};
+        const v = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false};
         const finalVal = computeFinal(v);
 
         const clsInitial   = canEditCell('initial')   ? 'editable' : '';
@@ -781,7 +786,7 @@
         if (!canEditCell(field)) return;
         if (cell.querySelector('input')) return;
 
-        const current = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialManual:false};
+        const current = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false};
 
         const input = document.createElement('input');
         input.type = 'number';
@@ -797,13 +802,12 @@
           const val = Math.max(0, parseInt(input.value, 10) || 0);
           const next = { ...current, [field]: val };
 
-          // ✅ Admin "საწყისი" ცვლილება აუცილებლად დამახსოვრდეს და აღარ გადაიწეროს prev final-ით
-          if (field === 'initial' && isAdmin) next.initialManual = true;
+          // ✅ admin initial edit -> must persist
+          if (field === 'initial' && isAdmin) next.initialEdited = true;
 
           dataByDept.set(dept, next);
-
           renderTable();
-          await enqueueSaveNow(); // immediate save
+          await enqueueSaveNow(); // immediate
         };
 
         input.addEventListener('blur', () => { commit(); }, { once:true });
@@ -998,7 +1002,7 @@
     }
 
     // ==========================================================
-    // Auth (password gate only)
+    // Auth
     // ==========================================================
     function checkPassword() {
       const pass = (document.getElementById('password').value || '').trim();
@@ -1055,6 +1059,9 @@
       });
 
       document.getElementById('adminButton').addEventListener('click', toggleLock);
+
+      // ✅ აღარანაირი sort/კლიკის listener ცხრილის სათაურებზე — რიგი მუდმივია
+      // (არც ერთ th-ზე არ ვამატებთ event listener-ს)
 
       // Admin stats events
       const monthSel = document.getElementById('statsMonth');
