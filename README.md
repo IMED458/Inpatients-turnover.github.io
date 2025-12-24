@@ -213,17 +213,17 @@
           <div class="stat-card">
             <div class="stat-label">თვეში შემოსული (Admission)</div>
             <div class="stat-value" id="statAdmission">—</div>
-            <div class="stat-sub" id="statAdmissionSub">მხოლოდ: ზრდასრულთა ემერჯენსი + ბავშვთა ემერჯენსი</div>
+            <div class="stat-sub">მხოლოდ: ზრდასრულთა ემერჯენსი + ბავშვთა ემერჯენსი</div>
           </div>
           <div class="stat-card">
             <div class="stat-label">თვეში გაწერილი (Discharge)</div>
             <div class="stat-value" id="statDischarge">—</div>
-            <div class="stat-sub" id="statDischargeSub">ჯამი ყველა დეპარტამენტზე</div>
+            <div class="stat-sub">ჯამი ყველა დეპარტამენტზე</div>
           </div>
           <div class="stat-card">
             <div class="stat-label">თვეში გარდაცვლილი (Mortality)</div>
             <div class="stat-value" id="statMortality">—</div>
-            <div class="stat-sub" id="statMortalitySub">ჯამი ყველა დეპარტამენტზე</div>
+            <div class="stat-sub">ჯამი ყველა დეპარტამენტზე</div>
           </div>
         </div>
 
@@ -267,9 +267,9 @@
   </div>
 
   <script>
-    // =========================
+    // ==========================================================
     // Firebase
-    // =========================
+    // ==========================================================
     const firebaseConfig = {
       apiKey: "AIzaSyDJv8Jn4eJhpj2k1STTtzv6RAnU4pa1crg",
       authDomain: "inpatients-turnover.firebaseapp.com",
@@ -281,6 +281,7 @@
     };
 
     let db = null;
+    let fbInited = false;
 
     function setFbStatus(ok, text) {
       const dot1 = document.getElementById('fbDot');
@@ -295,10 +296,14 @@
 
     function initFirebase() {
       try {
-        firebase.initializeApp(firebaseConfig);
+        if (!fbInited) {
+          firebase.initializeApp(firebaseConfig);
+          fbInited = true;
+        }
         try { if (firebase.analytics) firebase.analytics(); } catch (e) {}
         db = firebase.firestore();
 
+        // Offline persistence for many devices (best effort)
         try { db.enablePersistence({ synchronizeTabs:true }).catch(() => {}); } catch (e) {}
 
         setFbStatus(false, "Firebase: შემოწმება...");
@@ -315,21 +320,41 @@
       }
     }
 
-    // =========================
+    // ==========================================================
     // State
-    // =========================
+    // ==========================================================
     let selectedDate = new Date();
     let currentYear = selectedDate.getFullYear();
     let isAdmin = false;
     let isLocked = false;
-    let sortDirection = {};
-    let currentData = [];
+
+    // Stable dept order (never shrinks)
+    const BASE_DEPTS = [
+      "ზრდასრულთა ემერჯენსი","ქირურგია","რეანიმაცია","კარდიორეანიმაცია","ბავშვთა ემერჯენსი","ბავშვთა რეანიმაცია",
+      "ნევროლოგია","ნეიროქირურგია","ნეირორეანიმაცია","თორაკოქირურგია","ტრავმატოლოგია","ანგიოქირურგია",
+      "ყბა-სახის ქირურგია","უროლოგია","ბავშვთა ქირურგია","პედიატრია","ბავშვთა ონკოჰემატოლოგია","ნეფროლოგია",
+      "ჰეპატოლოგია","ინფექციური","შინაგანი მედიცინა","კარდიოლოგია","ონკოჰემატოლოგია 1","ონკოჰემატოლოგია 2",
+      "გინეკოლოგია","ძვლის ტვინის გადანერგვა","მამოლოგია","ოფთალმოლოგია"
+    ];
+
+    const ADMISSION_DEPTS_ONLY = new Set(["ზრდასრულთა ემერჯენსი", "ბავშვთა ემერჯენსი"]);
+
+    // Store values by dept (NOT by index)
+    let deptOrder = [...BASE_DEPTS];
+    let dataByDept = new Map(); // dept -> {initial, admission, discharge, transfer, mortality}
+    let viewSort = { col: null, dir: 'asc' };
+
+    // Debounced save
     let pendingSaveTimer = null;
     let isSaving = false;
 
-    // =========================
+    // Live listener
+    let unsubscribeDay = null;
+    let lastAppliedUpdatedAtMs = 0;
+
+    // ==========================================================
     // Helpers
-    // =========================
+    // ==========================================================
     function showOverlay(on) {
       const el = document.getElementById('loadingOverlay');
       if (!el) return;
@@ -367,8 +392,12 @@
       return d;
     }
 
-    function computeFinal(row) {
-      return (+row.initial||0) + (+row.admission||0) - (+row.discharge||0) - (+row.transfer||0) - (+row.mortality||0);
+    function safeDeptKey(s) {
+      return String(s || '').trim();
+    }
+
+    function computeFinal(v) {
+      return (+v.initial||0) + (+v.admission||0) - (+v.discharge||0) - (+v.transfer||0) - (+v.mortality||0);
     }
 
     function canWriteNow() {
@@ -402,123 +431,181 @@
       document.getElementById('urgentOperations').disabled = disabled;
     }
 
-    // =========================
-    // Cache (instant load)
-    // =========================
-    function cacheKeyForDate(d) { return `inpatients_cache_${getDocId(d)}`; }
+    function buildStableDeptOrder(todayRows, prevRows, storedOrder) {
+      // Use stored deptOrder from Firestore if available, but ensure it doesn't shrink
+      const found = new Set();
+      const order = [];
 
-    function saveCacheForDate(d, payload) {
-      try { localStorage.setItem(cacheKeyForDate(d), JSON.stringify(payload)); } catch(e) {}
+      function add(d) {
+        const k = safeDeptKey(d);
+        if (!k) return;
+        if (found.has(k)) return;
+        found.add(k);
+        order.push(k);
+      }
+
+      // 1) Start with stored order (if exists)
+      if (Array.isArray(storedOrder) && storedOrder.length) {
+        storedOrder.forEach(add);
+      } else {
+        // fallback: base order
+        BASE_DEPTS.forEach(add);
+      }
+
+      // 2) Ensure BASE_DEPTS exist (and preserve base order positions as much as possible)
+      BASE_DEPTS.forEach(add);
+
+      // 3) Add any extra depts found in docs
+      (prevRows || []).forEach(r => add(r.dept));
+      (todayRows || []).forEach(r => add(r.dept));
+
+      return order;
     }
 
-    function loadCacheForDate(d) {
-      try {
-        const raw = localStorage.getItem(cacheKeyForDate(d));
-        return raw ? JSON.parse(raw) : null;
-      } catch(e) { return null; }
+    // ==========================================================
+    // Firestore I/O
+    // ==========================================================
+    async function readDayDoc(dateObj) {
+      const id = getDocId(dateObj);
+      const snap = await db.collection('dailyData').doc(id).get();
+      if (!snap.exists) return null;
+      return snap.data() || null;
     }
 
-    function applyPayloadToUI(payload) {
-      if (!payload) return;
-
-      currentData = Array.isArray(payload.rows) ? payload.rows : [];
-      currentData = currentData.map(r => ({
-        dept: String(r.dept ?? ''),
+    function normalizeRowsFromDoc(docData) {
+      const rows = Array.isArray(docData?.rows) ? docData.rows : [];
+      return rows.map(r => ({
+        dept: safeDeptKey(r.dept),
         initial: +r.initial || 0,
         admission: +r.admission || 0,
         discharge: +r.discharge || 0,
         transfer: +r.transfer || 0,
-        mortality: +r.mortality || 0,
-        final: +r.final || 0
-      }));
+        mortality: +r.mortality || 0
+      })).filter(r => r.dept);
+    }
 
-      isLocked = !!payload.locked;
+    function exportPayloadForSave() {
+      const rows = deptOrder.map(dept => {
+        const v = dataByDept.get(dept) || {};
+        const row = {
+          dept,
+          initial: +v.initial || 0,
+          admission: +v.admission || 0,
+          discharge: +v.discharge || 0,
+          transfer: +v.transfer || 0,
+          mortality: +v.mortality || 0
+        };
+        row.final = computeFinal(row);
+        return row;
+      });
 
-      document.getElementById('responsiblePerson').value = payload.responsible || '';
-      document.getElementById('urgentOperations').value = payload.urgent || '';
+      return {
+        deptOrder: [...deptOrder],
+        rows,
+        responsible: document.getElementById('responsiblePerson').value || '',
+        urgent: document.getElementById('urgentOperations').value || '',
+        locked: !!isLocked
+      };
+    }
+
+    function applyStateFromDoc(docData, { fromRemote = false, preferNoOverwriteWhileEditing = true } = {}) {
+      if (!docData) return;
+
+      // Avoid overwriting while user is editing an input
+      const isEditingNow = !!document.querySelector('#tableBody input');
+      if (preferNoOverwriteWhileEditing && isEditingNow) return;
+
+      const todayRows = normalizeRowsFromDoc(docData);
+      const storedOrder = Array.isArray(docData.deptOrder) ? docData.deptOrder : null;
+
+      // Build stable order
+      deptOrder = buildStableDeptOrder(todayRows, [], storedOrder);
+
+      // Build map
+      const map = new Map();
+      todayRows.forEach(r => {
+        map.set(r.dept, {
+          initial: +r.initial || 0,
+          admission: +r.admission || 0,
+          discharge: +r.discharge || 0,
+          transfer: +r.transfer || 0,
+          mortality: +r.mortality || 0
+        });
+      });
+
+      // Ensure every dept exists
+      deptOrder.forEach(dept => {
+        if (!map.has(dept)) map.set(dept, { initial:0, admission:0, discharge:0, transfer:0, mortality:0 });
+      });
+
+      dataByDept = map;
+
+      isLocked = !!docData.locked;
+
+      document.getElementById('responsiblePerson').value = docData.responsible || '';
+      document.getElementById('urgentOperations').value = docData.urgent || '';
 
       updateLockButton();
       setTextareasDisabled();
       renderTable();
     }
 
-    // =========================
-    // Firestore I/O
-    // =========================
-    async function readDayDoc(dateObj) {
-      const id = getDocId(dateObj);
-      const snap = await db.collection('dailyData').doc(id).get();
-      if (!snap.exists) return null;
-      const d = snap.data() || {};
-      return {
-        rows: Array.isArray(d.rows) ? d.rows : [],
-        responsible: d.responsible || '',
-        urgent: d.urgent || '',
-        locked: !!d.locked
-      };
-    }
-
-    function buildDeptListFromSources(todayDoc, prevDoc) {
-      if (todayDoc && Array.isArray(todayDoc.rows) && todayDoc.rows.length) {
-        return todayDoc.rows.map(r => String(r.dept ?? '')).filter(Boolean);
+    function detachLiveListener() {
+      if (typeof unsubscribeDay === 'function') {
+        try { unsubscribeDay(); } catch(e) {}
       }
-      if (prevDoc && Array.isArray(prevDoc.rows) && prevDoc.rows.length) {
-        return prevDoc.rows.map(r => String(r.dept ?? '')).filter(Boolean);
-      }
-      return [
-        "ზრდასრულთა ემერჯენსი","ქირურგია","რეანიმაცია","კარდიორეანიმაცია","ბავშვთა ემერჯენსი","ბავშვთა რეანიმაცია",
-        "ნევროლოგია","ნეიროქირურგია","ნეირორეანიმაცია","თორაკოქირურგია","ტრავმატოლოგია","ანგიოქირურგია",
-        "ყბა-სახის ქირურგია","უროლოგია","ბავშვთა ქირურგია","პედიატრია","ბავშვთა ონკოჰემატოლოგია","ნეფროლოგია",
-        "ჰეპატოლოგია","ინფექციური","შინაგანი მედიცინა","კარდიოლოგია","ონკოჰემატოლოგია 1","ონკოჰემატოლოგია 2",
-        "გინეკოლოგია","ძვლის ტვინის გადანერგვა","მამოლოგია","ოფთალმოლოგია"
-      ];
+      unsubscribeDay = null;
     }
 
-    function mapPrevFinal(prevDoc) {
-      const m = new Map();
-      if (!prevDoc || !Array.isArray(prevDoc.rows)) return m;
-      prevDoc.rows.forEach(r => {
-        const dept = String(r.dept ?? '');
-        if (!dept) return;
-        m.set(dept, (+r.final || 0));
-      });
-      return m;
-    }
+    function attachLiveListener() {
+      if (!db) return;
+      detachLiveListener();
 
-    function mapTodayRows(todayDoc) {
-      const m = new Map();
-      if (!todayDoc || !Array.isArray(todayDoc.rows)) return m;
-      todayDoc.rows.forEach(r => {
-        const dept = String(r.dept ?? '');
-        if (!dept) return;
-        m.set(dept, r);
-      });
-      return m;
-    }
+      const docId = getDocId(selectedDate);
 
-    function composeRowsForceInitial(depts, prevFinalMap, todayMap) {
-      return depts.map(dept => {
-        const saved = todayMap.get(dept) || {};
-        const initial = prevFinalMap.has(dept) ? (+prevFinalMap.get(dept) || 0) : (+saved.initial || 0);
+      unsubscribeDay = db.collection('dailyData').doc(docId).onSnapshot(
+        { includeMetadataChanges: true },
+        (snap) => {
+          if (!snap.exists) {
+            // doc may be created after forced-initial save
+            return;
+          }
+          const d = snap.data() || {};
 
-        const row = {
-          dept,
-          initial,
-          admission: +saved.admission || 0,
-          discharge: +saved.discharge || 0,
-          transfer: +saved.transfer || 0,
-          mortality: +saved.mortality || 0,
-          final: 0
-        };
-        row.final = computeFinal(row);
-        return row;
-      });
+          // Firestore updatedAt -> ms
+          let remoteMs = 0;
+          try {
+            if (d.updatedAt && typeof d.updatedAt.toDate === 'function') {
+              remoteMs = d.updatedAt.toDate().getTime();
+            }
+          } catch(e) {}
+
+          // Avoid older overwrite
+          if (remoteMs && remoteMs < lastAppliedUpdatedAtMs) return;
+          if (remoteMs) lastAppliedUpdatedAtMs = remoteMs;
+
+          // Status
+          const fromCache = !!snap.metadata.fromCache;
+          const pending = !!snap.metadata.hasPendingWrites;
+          setFbStatus(true, pending
+            ? "Firebase: ინახება..."
+            : (fromCache ? "Firebase: ქეშიდან (offline)" : "Firebase: სინქრონიზებულია ✓")
+          );
+
+          applyStateFromDoc(d, { fromRemote:true, preferNoOverwriteWhileEditing:true });
+        },
+        (err) => {
+          console.warn("Live listener error:", err);
+          setFbStatus(false, "Firebase: შეცდომა ✗");
+        }
+      );
     }
 
     function scheduleSave() {
       if (!db) return;
+      if (!canWriteNow()) return;
       if (pendingSaveTimer) clearTimeout(pendingSaveTimer);
-      pendingSaveTimer = setTimeout(saveAllData, 300);
+      pendingSaveTimer = setTimeout(saveAllData, 350);
     }
 
     async function saveAllData() {
@@ -530,19 +617,16 @@
       const docId = getDocId(selectedDate);
 
       try {
-        await db.collection('dailyData').doc(docId).set({
-          rows: currentData,
-          responsible: document.getElementById('responsiblePerson').value || '',
-          urgent: document.getElementById('urgentOperations').value || '',
-          locked: !!isLocked
-        }, { merge:true });
+        const payload = exportPayloadForSave();
 
-        saveCacheForDate(selectedDate, {
-          rows: currentData,
-          responsible: document.getElementById('responsiblePerson').value || '',
-          urgent: document.getElementById('urgentOperations').value || '',
-          locked: !!isLocked
-        });
+        await db.collection('dailyData').doc(docId).set({
+          deptOrder: payload.deptOrder,
+          rows: payload.rows,
+          responsible: payload.responsible,
+          urgent: payload.urgent,
+          locked: payload.locked,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge:true });
 
       } catch (e) {
         console.warn('Save error:', e);
@@ -552,52 +636,75 @@
       }
     }
 
-    // =========================
-    // Load logic
-    // =========================
+    // ==========================================================
+    // Forced initial logic (prev final -> today initial)
+    // ==========================================================
+    function buildStateFromPrevAndToday(prevDoc, todayDoc) {
+      const prevRows = normalizeRowsFromDoc(prevDoc);
+      const todayRows = normalizeRowsFromDoc(todayDoc);
+      const storedOrder = Array.isArray(todayDoc?.deptOrder) ? todayDoc.deptOrder : null;
+
+      // stable order
+      deptOrder = buildStableDeptOrder(todayRows, prevRows, storedOrder);
+
+      // prev final map
+      const prevFinal = new Map();
+      prevRows.forEach(r => prevFinal.set(r.dept, computeFinal(r)));
+
+      // today map
+      const todayMap = new Map();
+      todayRows.forEach(r => todayMap.set(r.dept, r));
+
+      dataByDept = new Map();
+      deptOrder.forEach(dept => {
+        const saved = todayMap.get(dept) || {};
+        const forcedInitial = prevFinal.has(dept) ? (+prevFinal.get(dept) || 0) : (+saved.initial || 0);
+
+        dataByDept.set(dept, {
+          initial: forcedInitial,
+          admission: +saved.admission || 0,
+          discharge: +saved.discharge || 0,
+          transfer: +saved.transfer || 0,
+          mortality: +saved.mortality || 0
+        });
+      });
+
+      isLocked = !!todayDoc?.locked;
+
+      document.getElementById('responsiblePerson').value = todayDoc?.responsible || '';
+      document.getElementById('urgentOperations').value = todayDoc?.urgent || '';
+
+      updateLockButton();
+      setTextareasDisabled();
+      renderTable();
+    }
+
+    // ==========================================================
+    // Load logic (Firebase source of truth)
+    // ==========================================================
     async function loadAllData() {
       if (!db) return;
 
       document.getElementById('selectedDate').textContent = formatDate(selectedDate);
-
-      const cached = loadCacheForDate(selectedDate);
-      if (cached) applyPayloadToUI(cached);
-      else { currentData = []; renderTable(); }
-
       showOverlay(true);
 
       try {
+        // Live sync immediately
+        attachLiveListener();
+
+        // Build forced initial baseline from prev + today
         const prevDate = dateMinusOneDay(selectedDate);
         const [prevDoc, todayDoc] = await Promise.all([
           readDayDoc(prevDate),
           readDayDoc(selectedDate)
         ]);
 
-        const depts = buildDeptListFromSources(todayDoc, prevDoc);
-        const prevFinalMap = mapPrevFinal(prevDoc);
-        const todayMap = mapTodayRows(todayDoc);
+        buildStateFromPrevAndToday(prevDoc, todayDoc);
 
-        const rows = composeRowsForceInitial(depts, prevFinalMap, todayMap);
-
-        isLocked = todayDoc ? !!todayDoc.locked : false;
-
-        document.getElementById('responsiblePerson').value = todayDoc ? (todayDoc.responsible || '') : '';
-        document.getElementById('urgentOperations').value = todayDoc ? (todayDoc.urgent || '') : '';
-
-        currentData = rows;
-
-        updateLockButton();
-        setTextareasDisabled();
-        renderTable();
-
-        if (canWriteNow()) await saveAllData();
-
-        saveCacheForDate(selectedDate, {
-          rows: currentData,
-          responsible: document.getElementById('responsiblePerson').value || '',
-          urgent: document.getElementById('urgentOperations').value || '',
-          locked: !!isLocked
-        });
+        // Ensure today's doc exists & has forced initial (writes to Firestore)
+        if (canWriteNow()) {
+          await saveAllData();
+        }
 
         if (isAdmin) {
           const month = selectedDate.getMonth();
@@ -614,23 +721,64 @@
       }
     }
 
-    // =========================
-    // Render & editing
-    // =========================
+    // ==========================================================
+    // Rendering & Editing (VIEW sort only)
+    // ==========================================================
+    function getViewRows() {
+      const rows = deptOrder.map(dept => {
+        const v = dataByDept.get(dept) || {};
+        const row = {
+          dept,
+          initial: +v.initial || 0,
+          admission: +v.admission || 0,
+          discharge: +v.discharge || 0,
+          transfer: +v.transfer || 0,
+          mortality: +v.mortality || 0
+        };
+        row.final = computeFinal(row);
+        return row;
+      });
+
+      if (viewSort.col === null) return rows;
+
+      const dir = viewSort.dir;
+      const col = viewSort.col;
+
+      const get = (r) => {
+        if (col === 0) return (r.dept || '').toLowerCase();
+        if (col === 1) return +r.initial || 0;
+        if (col === 2) return +r.admission || 0;
+        if (col === 3) return +r.discharge || 0;
+        if (col === 4) return +r.transfer || 0;
+        if (col === 5) return +r.mortality || 0;
+        if (col === 6) return +r.final || 0;
+        return 0;
+      };
+
+      rows.sort((a,b) => {
+        const A = get(a), B = get(b);
+        if (A === B) return 0;
+        if (dir === 'asc') return A > B ? 1 : -1;
+        return A < B ? 1 : -1;
+      });
+
+      return rows;
+    }
+
     function renderTable() {
       const tbody = document.getElementById('tableBody');
       tbody.innerHTML = '';
 
-      if (!currentData || !currentData.length) {
+      const rows = getViewRows();
+
+      if (!rows.length) {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td colspan="7" style="text-align:center;color:#666;padding:18px;">მონაცემები არ არის ნაჩვენები (იტვირთება...)</td>`;
+        tr.innerHTML = `<td colspan="7" style="text-align:center;color:#666;padding:18px;">მონაცემები არ არის ნაჩვენები</td>`;
         tbody.appendChild(tr);
         return;
       }
 
-      for (let i = 0; i < currentData.length; i++) {
-        const row = currentData[i];
-
+      for (const row of rows) {
         const clsInitial   = canEditCell('initial')   ? 'editable' : '';
         const clsAdmission = canEditCell('admission') ? 'editable' : '';
         const clsDischarge = canEditCell('discharge') ? 'editable' : '';
@@ -640,23 +788,24 @@
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td>${row.dept}</td>
-          <td class="${clsInitial}" data-index="${i}" data-field="initial">${row.initial}</td>
-          <td class="${clsAdmission}" data-index="${i}" data-field="admission">${row.admission}</td>
-          <td class="${clsDischarge}" data-index="${i}" data-field="discharge">${row.discharge}</td>
-          <td class="${clsTransfer}" data-index="${i}" data-field="transfer">${row.transfer}</td>
-          <td class="${clsMortality}" data-index="${i}" data-field="mortality">${row.mortality}</td>
+          <td class="${clsInitial}" data-dept="${row.dept}" data-field="initial">${row.initial}</td>
+          <td class="${clsAdmission}" data-dept="${row.dept}" data-field="admission">${row.admission}</td>
+          <td class="${clsDischarge}" data-dept="${row.dept}" data-field="discharge">${row.discharge}</td>
+          <td class="${clsTransfer}" data-dept="${row.dept}" data-field="transfer">${row.transfer}</td>
+          <td class="${clsMortality}" data-dept="${row.dept}" data-field="mortality">${row.mortality}</td>
           <td>${row.final}</td>
         `;
         tbody.appendChild(tr);
       }
 
-      const totals = currentData.reduce((acc, r) => {
-        acc.initial += +r.initial || 0;
-        acc.admission += +r.admission || 0;
-        acc.discharge += +r.discharge || 0;
-        acc.transfer += +r.transfer || 0;
-        acc.mortality += +r.mortality || 0;
-        acc.final += +r.final || 0;
+      const totals = deptOrder.reduce((acc, dept) => {
+        const v = dataByDept.get(dept) || {};
+        acc.initial += +v.initial || 0;
+        acc.admission += +v.admission || 0;
+        acc.discharge += +v.discharge || 0;
+        acc.transfer += +v.transfer || 0;
+        acc.mortality += +v.mortality || 0;
+        acc.final += computeFinal(v);
         return acc;
       }, {initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0});
 
@@ -682,16 +831,18 @@
         if (!cell) return;
         if (!cell.classList.contains('editable')) return;
 
-        const idx = cell.dataset.index;
+        const dept = safeDeptKey(cell.dataset.dept);
         const field = cell.dataset.field;
-        if (idx === undefined || !field) return;
+        if (!dept || !field) return;
         if (!canEditCell(field)) return;
         if (cell.querySelector('input')) return;
+
+        const current = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0};
 
         const input = document.createElement('input');
         input.type = 'number';
         input.min = '0';
-        input.value = (cell.textContent || '0').trim();
+        input.value = String(Math.max(0, parseInt(current[field], 10) || 0));
 
         cell.textContent = '';
         cell.appendChild(input);
@@ -700,8 +851,8 @@
 
         const commit = () => {
           const val = Math.max(0, parseInt(input.value, 10) || 0);
-          currentData[idx][field] = val;
-          currentData[idx].final = computeFinal(currentData[idx]);
+          const next = { ...current, [field]: val };
+          dataByDept.set(dept, next);
 
           renderTable();
           scheduleSave();
@@ -723,9 +874,9 @@
       uo.addEventListener('input', () => { if (!canWriteNow()) return; scheduleSave(); });
     }
 
-    // =========================
+    // ==========================================================
     // Admin lock
-    // =========================
+    // ==========================================================
     async function toggleLock() {
       if (!isAdmin) return;
       isLocked = !isLocked;
@@ -736,9 +887,9 @@
       showToast(isLocked ? 'დღე დაიბლოკა' : 'დღე განიბლოკა');
     }
 
-    // =========================
-    // Calendar navigation
-    // =========================
+    // ==========================================================
+    // Calendar
+    // ==========================================================
     function renderCalendar(year) {
       document.getElementById('calendarTitle').textContent = `${year} წლის კალენდარი`;
       const container = document.getElementById('calendarContainer');
@@ -809,35 +960,24 @@
       }
     }
 
-    // =========================
-    // Sorting
-    // =========================
+    // ==========================================================
+    // Sorting (VIEW ONLY)
+    // ==========================================================
     function sortTable(col) {
-      sortDirection[col] = (sortDirection[col] === 'asc') ? 'desc' : 'asc';
-      const dir = sortDirection[col];
-
-      currentData.sort((a, b) => {
-        let A, B;
-        if (col === 0) { A = (a.dept || '').toLowerCase(); B = (b.dept || '').toLowerCase(); }
-        if (col === 1) { A = +a.initial || 0; B = +b.initial || 0; }
-        if (col === 2) { A = +a.admission || 0; B = +b.admission || 0; }
-        if (col === 3) { A = +a.discharge || 0; B = +b.discharge || 0; }
-        if (col === 4) { A = +a.transfer || 0; B = +b.transfer || 0; }
-        if (col === 5) { A = +a.mortality || 0; B = +b.mortality || 0; }
-        if (col === 6) { A = +a.final || 0; B = +b.final || 0; }
-        if (A === B) return 0;
-        return (dir === 'asc') ? (A > B ? 1 : -1) : (A < B ? 1 : -1);
-      });
-
+      if (viewSort.col === col) {
+        viewSort.dir = (viewSort.dir === 'asc') ? 'desc' : 'asc';
+      } else {
+        viewSort.col = col;
+        viewSort.dir = 'asc';
+      }
       renderTable();
-      scheduleSave();
+      // no save on sort
     }
 
-    // =========================
+    // ==========================================================
     // Admin monthly statistics
-    // =========================
+    // ==========================================================
     const monthNames = ['იანვარი','თებერვალი','მარტი','აპრილი','მაისი','ივნისი','ივლისი','აგვისტო','სექტემბერი','ოქტომბერი','ნოემბერი','დეკემბერი'];
-    const ADMISSION_DEPTS_ONLY = new Set(["ზრდასრულთა ემერჯენსი", "ბავშვთა ემერჯენსი"]);
 
     function setStatsSelectors(monthIndex, yearVal) {
       const monthSel = document.getElementById('statsMonth');
@@ -903,7 +1043,7 @@
           const rows = Array.isArray(data.rows) ? data.rows : [];
 
           for (const r of rows) {
-            const dept = String(r.dept || '');
+            const dept = safeDeptKey(r.dept);
             if (ADMISSION_DEPTS_ONLY.has(dept)) totalAdmission += (+r.admission || 0);
             totalDischarge += (+r.discharge || 0);
             totalMortality += (+r.mortality || 0);
@@ -922,9 +1062,9 @@
       }
     }
 
-    // =========================
+    // ==========================================================
     // Auth (password gate only)
-    // =========================
+    // ==========================================================
     function checkPassword() {
       const pass = (document.getElementById('password').value || '').trim();
       isAdmin = (pass === 'admin1');
@@ -939,9 +1079,9 @@
       }
     }
 
-    // =========================
+    // ==========================================================
     // UI wiring
-    // =========================
+    // ==========================================================
     function setupUI() {
       initFirebase();
 
@@ -952,9 +1092,23 @@
       document.getElementById('nextYearBtn').addEventListener('click', () => { currentYear++; renderCalendar(currentYear); });
 
       document.getElementById('exportBtn').addEventListener('click', () => window.print());
-      document.getElementById('prevDayBtn').addEventListener('click', () => { selectedDate.setDate(selectedDate.getDate() - 1); document.getElementById('selectedDate').textContent = formatDate(selectedDate); loadAllData(); });
-      document.getElementById('nextDayBtn').addEventListener('click', () => { selectedDate.setDate(selectedDate.getDate() + 1); document.getElementById('selectedDate').textContent = formatDate(selectedDate); loadAllData(); });
-      document.getElementById('showCalendarBtn').addEventListener('click', () => { setView('calendar'); renderCalendar(currentYear); });
+
+      document.getElementById('prevDayBtn').addEventListener('click', () => {
+        selectedDate.setDate(selectedDate.getDate() - 1);
+        document.getElementById('selectedDate').textContent = formatDate(selectedDate);
+        loadAllData();
+      });
+
+      document.getElementById('nextDayBtn').addEventListener('click', () => {
+        selectedDate.setDate(selectedDate.getDate() + 1);
+        document.getElementById('selectedDate').textContent = formatDate(selectedDate);
+        loadAllData();
+      });
+
+      document.getElementById('showCalendarBtn').addEventListener('click', () => {
+        setView('calendar');
+        renderCalendar(currentYear);
+      });
 
       document.getElementById('adminButton').addEventListener('click', toggleLock);
 
@@ -988,6 +1142,10 @@
 
       setupTableEditing();
       setupExtraFields();
+
+      window.addEventListener('beforeunload', () => {
+        detachLiveListener();
+      });
 
       setView('auth');
     }
