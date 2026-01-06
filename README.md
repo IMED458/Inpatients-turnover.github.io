@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html lang="ka">
 <head>
   <meta charset="UTF-8" />
@@ -294,6 +295,7 @@
     let currentYear = selectedDate.getFullYear();
     let isAdmin = false;
     let isLocked = false;
+    
     // ✅ ფიქსირებული რიგი — არასდროს იცვლება
     const BASE_DEPTS = [
       "ზრდასრულთა ემერჯენსი","ქირურგია","რეანიმაცია","კარდიორეანიმაცია","ბავშვთა ემერჯენსი","ბავშვთა რეანიმაცია",
@@ -303,13 +305,22 @@
       "გინეკოლოგია","ძვლის ტვინის გადანერგვა","მამოლოგია","ოფთალმოლოგია"
     ];
     const ADMISSION_DEPTS_ONLY = new Set(["ზრდასრულთა ემერჯენსი", "ბავშვთა ემერჯენსი"]);
-    const deptOrder = [...BASE_DEPTS]; // ✅ ყოველთვის იგივე რიგი
-    let dataByDept = new Map(); // dept -> { initial, admission, discharge, transfer, mortality, initialEdited }
+    const deptOrder = [...BASE_DEPTS];
+    let dataByDept = new Map();
+    
+    // ✅ CRITICAL FIX: Track if we're currently editing to prevent race conditions
+    let isCurrentlyEditing = false;
+    let currentEditingCell = null;
+    
     // Live listener
     let unsubscribeDay = null;
-    let lastAppliedUpdatedAtMs = 0;
-    // Save queue
+    
+    // ✅ REMOVED: lastAppliedUpdatedAtMs - ეს იყო პრობლემის წყარო
+    
+    // Save queue with debouncing
     let saveChain = Promise.resolve();
+    let saveTimeout = null;
+    
     // ==========================================================
     // Helpers
     // ==========================================================
@@ -346,14 +357,15 @@
     function computeFinal(v) {
       return (+v.initial||0) + (+v.admission||0) - (+v.discharge||0) - (+v.transfer||0) - (+v.mortality||0);
     }
-    // ✅ Admin წერს locked დღეზეც
+    
     function canWriteNow() { return isAdmin || !isLocked; }
-    // ✅ "საწყისი" მხოლოდ Admin-ს
+    
     function canEditCell(field) {
       if (!canWriteNow()) return false;
       if (field === 'initial' && !isAdmin) return false;
       return true;
     }
+    
     function updateLockButton() {
       const btn = document.getElementById('adminButton');
       const panel = document.getElementById('adminPanel');
@@ -366,33 +378,57 @@
       btn.textContent = isLocked ? 'განბლოკვა' : 'დაბლოკვა';
       if (panel) panel.style.display = 'block';
     }
+    
     function setTextareasDisabled() {
       const disabled = !canWriteNow();
       document.getElementById('responsiblePerson').disabled = disabled;
       document.getElementById('urgentOperations').disabled = disabled;
     }
-    // ✅ მთავარი ფიქსი: თუ user გახსნილ input-ს ტოვებს (სხვა უჯრაზე კლიკით),
-    // ცვლილება არ დაიკარგოს — ჯერ დავაკომიტოთ და დავინახოთ FIREBASE-ზე.
+    
+    // ✅ IMPROVED: Commit with better tracking
     function commitOpenEditorToState() {
       const input = document.querySelector('#tableBody input');
-      if (!input) return false;
+      if (!input) {
+        isCurrentlyEditing = false;
+        currentEditingCell = null;
+        return false;
+      }
+      
       const td = input.closest('td');
-      if (!td) return false;
+      if (!td) {
+        isCurrentlyEditing = false;
+        currentEditingCell = null;
+        return false;
+      }
+      
       const dept = safeDeptKey(td.dataset.dept);
       const field = td.dataset.field;
-      if (!dept || !field) return false;
+      if (!dept || !field) {
+        isCurrentlyEditing = false;
+        currentEditingCell = null;
+        return false;
+      }
+      
       const base = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false};
       const val = Math.max(0, parseInt(input.value, 10) || 0);
       const next = { ...base, [field]: val };
       if (field === 'initial' && isAdmin) next.initialEdited = true;
+      
       dataByDept.set(dept, next);
+      isCurrentlyEditing = false;
+      currentEditingCell = null;
+      
       renderTable();
       return true;
     }
+    
     async function commitOpenEditorAndSave() {
       const changed = commitOpenEditorToState();
-      if (changed) await enqueueSaveNow();
+      if (changed) {
+        await enqueueSaveNow();
+      }
     }
+    
     // ==========================================================
     // Firestore I/O
     // ==========================================================
@@ -402,6 +438,7 @@
       if (!snap.exists) return null;
       return snap.data() || null;
     }
+    
     function normalizeRowsFromDoc(docData) {
       const rows = Array.isArray(docData?.rows) ? docData.rows : [];
       return rows.map(r => ({
@@ -414,6 +451,7 @@
         initialEdited: !!r.initialEdited
       })).filter(r => r.dept);
     }
+    
     function exportPayloadForSave() {
       const rows = deptOrder.map(dept => {
         const v = dataByDept.get(dept) || {};
@@ -436,12 +474,16 @@
         locked: !!isLocked
       };
     }
+    
     async function saveAllData() {
       if (!db) return;
       if (!canWriteNow()) return;
+      
       const docId = getDocId(selectedDate);
       const payload = exportPayloadForSave();
+      
       setSaveIndicator('ინახება...');
+      
       try {
         await db.collection('dailyData').doc(docId).set({
           rows: payload.rows,
@@ -450,51 +492,89 @@
           locked: payload.locked,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         }, { merge:true });
+        
         setSaveIndicator('შენახულია ✓');
+        console.log('✅ Saved successfully:', docId, payload);
       } catch (e) {
-        console.warn('Save error:', e);
+        console.error('❌ Save error:', e);
         setSaveIndicator('შეცდომა ✗');
         showToast('შენახვა ვერ მოხერხდა');
       }
     }
+    
+    // ✅ IMPROVED: Debounced save
     function enqueueSaveNow() {
       if (!db) return Promise.resolve();
       if (!canWriteNow()) return Promise.resolve();
-      saveChain = saveChain.then(() => saveAllData()).catch(() => {});
-      return saveChain;
+      
+      // Clear existing timeout
+      if (saveTimeout) {
+        clearTimeout(saveTimeout);
+      }
+      
+      // Debounce by 500ms
+      return new Promise((resolve) => {
+        saveTimeout = setTimeout(() => {
+          saveChain = saveChain
+            .then(() => saveAllData())
+            .then(resolve)
+            .catch((e) => {
+              console.error('Save chain error:', e);
+              resolve();
+            });
+        }, 500);
+      });
     }
+    
     function detachLiveListener() {
       if (typeof unsubscribeDay === 'function') {
         try { unsubscribeDay(); } catch(e) {}
       }
       unsubscribeDay = null;
     }
+    
+    // ✅ CRITICAL FIX: Improved live listener that respects editing state
     function attachLiveListener() {
       if (!db) return;
       detachLiveListener();
+      
       const docId = getDocId(selectedDate);
+      
       unsubscribeDay = db.collection('dailyData').doc(docId).onSnapshot(
         { includeMetadataChanges: true },
         (snap) => {
-          if (!snap.exists) return;
+          if (!snap.exists) {
+            console.log('📄 Document does not exist yet:', docId);
+            return;
+          }
+          
           const d = snap.data() || {};
-          let remoteMs = 0;
-          try {
-            if (d.updatedAt && typeof d.updatedAt.toDate === 'function') {
-              remoteMs = d.updatedAt.toDate().getTime();
-            }
-          } catch(e) {}
-          if (remoteMs && remoteMs < lastAppliedUpdatedAtMs) return;
-          if (remoteMs) lastAppliedUpdatedAtMs = remoteMs;
           const fromCache = !!snap.metadata.fromCache;
           const pending = !!snap.metadata.hasPendingWrites;
+          
+          // ✅ Update Firebase status
           setFbStatus(true, pending
             ? "Firebase: ინახება..."
-            : (fromCache ? "Firebase: ქეშიდან (offline)" : "Firebase: სინქრონიზებულია ✓")
+            : (fromCache ? "Firebase: ქეშიდან" : "Firebase: სინქრონიზებულია ✓")
           );
-          if (!pending) setSaveIndicator('შენახულია ✓');
-          // არ გადავაწეროთ როცა input გახსნილია
-          if (document.querySelector('#tableBody input')) return;
+          
+          if (!pending) {
+            setSaveIndicator('შენახულია ✓');
+          }
+          
+          // ✅ CRITICAL: Don't overwrite data while user is editing
+          if (isCurrentlyEditing || document.querySelector('#tableBody input')) {
+            console.log('⚠️ User is editing, skipping remote update');
+            return;
+          }
+          
+          // ✅ CRITICAL: Only apply if it's a real server update (not our own pending write)
+          if (pending) {
+            console.log('⏳ Pending write, not applying remote data');
+            return;
+          }
+          
+          console.log('📥 Applying remote data:', d);
           applyDayDocToState(d);
         },
         (err) => {
@@ -503,10 +583,12 @@
         }
       );
     }
+    
     function applyDayDocToState(todayDoc) {
       const rows = normalizeRowsFromDoc(todayDoc);
       const saved = new Map();
       rows.forEach(r => saved.set(r.dept, r));
+      
       const nextMap = new Map();
       deptOrder.forEach(dept => {
         const r = saved.get(dept);
@@ -519,29 +601,37 @@
           initialEdited: r ? !!r.initialEdited : false
         });
       });
+      
       dataByDept = nextMap;
       isLocked = !!todayDoc?.locked;
+      
       document.getElementById('responsiblePerson').value = todayDoc?.responsible || '';
       document.getElementById('urgentOperations').value = todayDoc?.urgent || '';
+      
       updateLockButton();
       setTextareasDisabled();
       renderTable();
     }
+    
     // ==========================================================
     // Load logic (initial defaults from prev day final)
     // ==========================================================
     function buildStateFromPrevAndToday(prevDoc, todayDoc) {
       const prevRows = normalizeRowsFromDoc(prevDoc);
       const todayRows = normalizeRowsFromDoc(todayDoc);
+      
       const prevFinal = new Map();
       prevRows.forEach(r => prevFinal.set(r.dept, computeFinal(r)));
+      
       const todayMap = new Map();
       todayRows.forEach(r => todayMap.set(r.dept, r));
+      
       const next = new Map();
       deptOrder.forEach(dept => {
         const saved = todayMap.get(dept);
         let initialVal = 0;
         let initialEdited = false;
+        
         if (saved && saved.initialEdited) {
           initialVal = +saved.initial || 0;
           initialEdited = true;
@@ -552,6 +642,7 @@
           initialVal = saved ? (+saved.initial || 0) : 0;
           initialEdited = saved ? !!saved.initialEdited : false;
         }
+        
         next.set(dept, {
           initial: initialVal,
           admission: saved ? (+saved.admission || 0) : 0,
@@ -561,29 +652,42 @@
           initialEdited: initialEdited
         });
       });
+      
       dataByDept = next;
       isLocked = !!todayDoc?.locked;
+      
       document.getElementById('responsiblePerson').value = todayDoc?.responsible || '';
       document.getElementById('urgentOperations').value = todayDoc?.urgent || '';
+      
       updateLockButton();
       setTextareasDisabled();
       renderTable();
     }
+    
     async function loadAllData() {
       if (!db) return;
+      
       document.getElementById('selectedDate').textContent = formatDate(selectedDate);
       showOverlay(true);
       setSaveIndicator('—');
+      
       try {
+        // ✅ First attach listener
         attachLiveListener();
+        
         const prevDate = dateMinusOneDay(selectedDate);
         const [prevDoc, todayDoc] = await Promise.all([
           readDayDoc(prevDate),
           readDayDoc(selectedDate)
         ]);
+        
+        console.log('📂 Loaded docs - Prev:', prevDoc, 'Today:', todayDoc);
+        
         buildStateFromPrevAndToday(prevDoc, todayDoc);
-        // ✅ დოკის არსებობა + სინქი
+        
+        // ✅ Save to ensure document exists
         await enqueueSaveNow();
+        
         if (isAdmin) {
           const month = selectedDate.getMonth();
           const year = selectedDate.getFullYear();
@@ -591,26 +695,30 @@
           await computeMonthlyStats(year, month);
         }
       } catch (e) {
-        console.warn('Load error:', e);
+        console.error('❌ Load error:', e);
         showToast('ჩატვირთვა ვერ მოხერხდა');
       } finally {
         showOverlay(false);
       }
     }
+    
     // ==========================================================
     // Render (fixed order only — NEVER changes)
     // ==========================================================
     function renderTable() {
       const tbody = document.getElementById('tableBody');
       tbody.innerHTML = '';
+      
       for (const dept of deptOrder) {
         const v = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false};
         const finalVal = computeFinal(v);
+        
         const clsInitial = canEditCell('initial') ? 'editable' : '';
         const clsAdmission = canEditCell('admission') ? 'editable' : '';
         const clsDischarge = canEditCell('discharge') ? 'editable' : '';
         const clsTransfer = canEditCell('transfer') ? 'editable' : '';
         const clsMortality = canEditCell('mortality') ? 'editable' : '';
+        
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td>${dept}</td>
@@ -623,6 +731,7 @@
         `;
         tbody.appendChild(tr);
       }
+      
       const totals = deptOrder.reduce((acc, dept) => {
         const v = dataByDept.get(dept) || {};
         acc.initial += +v.initial || 0;
@@ -633,6 +742,7 @@
         acc.final += computeFinal(v);
         return acc;
       }, {initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0});
+      
       const totalRow = document.createElement('tr');
       totalRow.className = 'total-row';
       totalRow.innerHTML = `
@@ -646,74 +756,115 @@
       `;
       tbody.appendChild(totalRow);
     }
+    
     // ==========================================================
     // Editing (FIXED: always commit previous cell first)
     // ==========================================================
     function setupTableEditing() {
       const tbody = document.getElementById('tableBody');
+      
       tbody.addEventListener('click', async (e) => {
         const cell = e.target.closest('td');
         if (!cell) return;
-        // ✅ თუ სხვა input უკვე გახსნილია, ჯერ ის შევინახოთ!
-        await commitOpenEditorAndSave();
+        
+        // ✅ Commit any open editor first
+        if (isCurrentlyEditing && currentEditingCell !== cell) {
+          await commitOpenEditorAndSave();
+        }
+        
         if (!cell.classList.contains('editable')) return;
+        
         const dept = safeDeptKey(cell.dataset.dept);
         const field = cell.dataset.field;
         if (!dept || !field) return;
         if (!canEditCell(field)) return;
         if (cell.querySelector('input')) return;
+        
+        // ✅ Mark as editing
+        isCurrentlyEditing = true;
+        currentEditingCell = cell;
+        
         const base = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false};
+        
         const input = document.createElement('input');
         input.type = 'number';
         input.min = '0';
         input.value = String(Math.max(0, parseInt(base[field], 10) || 0));
+        
         cell.textContent = '';
         cell.appendChild(input);
         input.focus();
         input.select();
+        
         const commit = async () => {
           const val = Math.max(0, parseInt(input.value, 10) || 0);
-          // ✅ commit-ის დროსაც ბაზას თავიდან ვიღებთ (რომ სხვა ველები არ გადავწეროთ)
+          
           const latest = dataByDept.get(dept) || {initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false};
           const next = { ...latest, [field]: val };
           if (field === 'initial' && isAdmin) next.initialEdited = true;
+          
           dataByDept.set(dept, next);
+          isCurrentlyEditing = false;
+          currentEditingCell = null;
+          
           renderTable();
-          await enqueueSaveNow(); // ✅ დაუყოვნებლივი შენახვა ყველა ველზე
+          await enqueueSaveNow();
         };
+        
         input.addEventListener('blur', () => { commit(); }, { once:true });
         input.addEventListener('keydown', (ev) => {
           if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-          if (ev.key === 'Escape') { renderTable(); }
+          if (ev.key === 'Escape') { 
+            isCurrentlyEditing = false;
+            currentEditingCell = null;
+            renderTable(); 
+          }
         });
       });
-      // ✅ კლიკი ცხრილის გარეთაც -> თუ input ღიაა, შეინახოს
+      
+      // ✅ Click outside table
       document.addEventListener('mousedown', async (e) => {
         const isInsideTable = !!e.target.closest('#dataTable');
-        if (!isInsideTable) {
+        if (!isInsideTable && isCurrentlyEditing) {
           await commitOpenEditorAndSave();
         }
       });
     }
+    
     function setupExtraFields() {
       const rp = document.getElementById('responsiblePerson');
       const uo = document.getElementById('urgentOperations');
-      rp.addEventListener('input', () => { if (!canWriteNow()) return; enqueueSaveNow(); });
-      uo.addEventListener('input', () => { if (!canWriteNow()) return; enqueueSaveNow(); });
+      
+      let textareaTimeout = null;
+      
+      const debouncedSave = () => {
+        if (textareaTimeout) clearTimeout(textareaTimeout);
+        textareaTimeout = setTimeout(() => {
+          if (canWriteNow()) enqueueSaveNow();
+        }, 1000);
+      };
+      
+      rp.addEventListener('input', debouncedSave);
+      uo.addEventListener('input', debouncedSave);
     }
+    
     // ==========================================================
     // Admin lock
     // ==========================================================
     async function toggleLock() {
       if (!isAdmin) return;
+      
       await commitOpenEditorAndSave();
+      
       isLocked = !isLocked;
       updateLockButton();
       setTextareasDisabled();
       renderTable();
+      
       await enqueueSaveNow();
       showToast(isLocked ? 'დღე დაიბლოკა' : 'დღე განიბლოკა');
     }
+    
     // ==========================================================
     // Calendar
     // ==========================================================
@@ -721,12 +872,15 @@
       document.getElementById('calendarTitle').textContent = `${year} წლის კალენდარი`;
       const container = document.getElementById('calendarContainer');
       container.innerHTML = '';
+      
       const months = ['იანვარი','თებერვალი','მარტი','აპრილი','მაისი','ივნისი','ივლისი','აგვისტო','სექტემბერი','ოქტომბერი','ნოემბერი','დეკემბერი'];
       const today = new Date();
+      
       for (let m = 0; m < 12; m++) {
         const div = document.createElement('div');
         div.className = 'month';
         div.innerHTML = `<h3>${months[m]} ${year}</h3>`;
+        
         const table = document.createElement('table');
         const headRow = document.createElement('tr');
         ['კვი','ორშ','სამ','ოთხ','ხუთ','პარ','შაბ'].forEach(d => {
@@ -734,11 +888,14 @@
           th.textContent = d;
           headRow.appendChild(th);
         });
+        
         const thead = document.createElement('thead');
         thead.appendChild(headRow);
+        
         const tbody = document.createElement('tbody');
         const firstDay = new Date(year, m, 1).getDay();
         const daysInMonth = new Date(year, m + 1, 0).getDate();
+        
         let dayNum = 1;
         for (let r = 0; r < 6; r++) {
           const tr = document.createElement('tr');
@@ -749,9 +906,11 @@
             else {
               const clickedDay = dayNum;
               td.textContent = clickedDay;
+              
               if (year === today.getFullYear() && m === today.getMonth() && clickedDay === today.getDate()) {
                 td.classList.add('today');
               }
+              
               td.addEventListener('click', async () => {
                 await commitOpenEditorAndSave();
                 selectedDate = new Date(year, m, clickedDay);
@@ -759,6 +918,7 @@
                 setView('table');
                 await loadAllData();
               });
+              
               dayNum++;
             }
             tr.appendChild(td);
@@ -766,20 +926,24 @@
           tbody.appendChild(tr);
           if (dayNum > daysInMonth) break;
         }
+        
         table.appendChild(thead);
         table.appendChild(tbody);
         div.appendChild(table);
         container.appendChild(div);
       }
     }
+    
     // ==========================================================
     // Admin monthly statistics
     // ==========================================================
     const monthNames = ['იანვარი','თებერვალი','მარტი','აპრილი','მაისი','ივნისი','ივლისი','აგვისტო','სექტემბერი','ოქტომბერი','ნოემბერი','დეკემბერი'];
+    
     function setStatsSelectors(monthIndex, yearVal) {
       const monthSel = document.getElementById('statsMonth');
       const yearSel = document.getElementById('statsYear');
       if (!monthSel || !yearSel) return;
+      
       if (!monthSel.options.length) {
         monthNames.forEach((m, i) => {
           const opt = document.createElement('option');
@@ -788,6 +952,7 @@
           monthSel.appendChild(opt);
         });
       }
+      
       if (!yearSel.options.length) {
         const base = new Date().getFullYear();
         for (let y = base - 3; y <= base + 3; y++) {
@@ -797,9 +962,11 @@
           yearSel.appendChild(opt);
         }
       }
+      
       monthSel.value = String(monthIndex);
       yearSel.value = String(yearVal);
     }
+    
     function setStatsLoading(on) {
       const a = document.getElementById('statAdmission');
       const d = document.getElementById('statDischarge');
@@ -807,25 +974,34 @@
       if (!a || !d || !m) return;
       if (on) { a.textContent = '...'; d.textContent = '...'; m.textContent = '...'; }
     }
+    
     async function computeMonthlyStats(year, monthIndex) {
       if (!db) return;
+      
       setStatsLoading(true);
+      
       const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
       let totalAdmission = 0;
       let totalDischarge = 0;
       let totalMortality = 0;
+      
       const ids = [];
-      for (let day = 1; day <= daysInMonth; day++) ids.push(getDocId(new Date(year, monthIndex, day)));
+      for (let day = 1; day <= daysInMonth; day++) {
+        ids.push(getDocId(new Date(year, monthIndex, day)));
+      }
+      
       const batchSize = 10;
       for (let i = 0; i < ids.length; i += batchSize) {
         const chunk = ids.slice(i, i + batchSize);
         const snaps = await Promise.all(
           chunk.map(id => db.collection('dailyData').doc(id).get().catch(() => null))
         );
+        
         snaps.forEach(snap => {
           if (!snap || !snap.exists) return;
           const data = snap.data() || {};
           const rows = Array.isArray(data.rows) ? data.rows : [];
+          
           for (const r of rows) {
             const dept = safeDeptKey(r.dept);
             if (ADMISSION_DEPTS_ONLY.has(dept)) totalAdmission += (+r.admission || 0);
@@ -834,21 +1010,24 @@
           }
         });
       }
+      
       document.getElementById('statAdmission').textContent = String(totalAdmission);
       document.getElementById('statDischarge').textContent = String(totalDischarge);
       document.getElementById('statMortality').textContent = String(totalMortality);
+      
       const note = document.getElementById('statsNote');
       if (note) {
-        note.textContent =
-          `სტატისტიკა: ${monthNames[monthIndex]} ${year} — Admission ითვლის მხოლოდ: ზრდასრულთა ემერჯენსი + ბავშვთა ემერჯენსი; Discharge/Mortality ითვლის ყველა დეპარტამენტზე.`;
+        note.textContent = `სტატისტიკა: ${monthNames[monthIndex]} ${year} — Admission ითვლის მხოლოდ: ზრდასრულთა ემერჯენსი + ბავშვთა ემერჯენსი; Discharge/Mortality ითვლის ყველა დეპარტამენტზე.`;
       }
     }
+    
     // ==========================================================
     // Auth
     // ==========================================================
     function checkPassword() {
       const pass = (document.getElementById('password').value || '').trim();
       isAdmin = (pass === 'admin1');
+      
       if (pass === 'htmc' || isAdmin) {
         setView('calendar');
         currentYear = selectedDate.getFullYear();
@@ -858,69 +1037,104 @@
         alert('არასწორი პაროლი');
       }
     }
+    
     // ==========================================================
     // UI wiring
     // ==========================================================
     function setupUI() {
       initFirebase();
       setSaveIndicator('—');
+      
       document.getElementById('loginBtn').addEventListener('click', checkPassword);
-      document.getElementById('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') checkPassword(); });
-      document.getElementById('prevYearBtn').addEventListener('click', () => { currentYear--; renderCalendar(currentYear); });
-      document.getElementById('nextYearBtn').addEventListener('click', () => { currentYear++; renderCalendar(currentYear); });
+      document.getElementById('password').addEventListener('keydown', (e) => { 
+        if (e.key === 'Enter') checkPassword(); 
+      });
+      
+      document.getElementById('prevYearBtn').addEventListener('click', () => { 
+        currentYear--; 
+        renderCalendar(currentYear); 
+      });
+      
+      document.getElementById('nextYearBtn').addEventListener('click', () => { 
+        currentYear++; 
+        renderCalendar(currentYear); 
+      });
+      
       document.getElementById('exportBtn').addEventListener('click', async () => {
         await commitOpenEditorAndSave();
         window.print();
       });
+      
       document.getElementById('prevDayBtn').addEventListener('click', async () => {
         await commitOpenEditorAndSave();
         selectedDate.setDate(selectedDate.getDate() - 1);
         document.getElementById('selectedDate').textContent = formatDate(selectedDate);
         await loadAllData();
       });
+      
       document.getElementById('nextDayBtn').addEventListener('click', async () => {
         await commitOpenEditorAndSave();
         selectedDate.setDate(selectedDate.getDate() + 1);
         document.getElementById('selectedDate').textContent = formatDate(selectedDate);
         await loadAllData();
       });
+      
       document.getElementById('showCalendarBtn').addEventListener('click', async () => {
         await commitOpenEditorAndSave();
         setView('calendar');
         renderCalendar(currentYear);
       });
+      
       document.getElementById('adminButton').addEventListener('click', toggleLock);
+      
       // Admin stats events
       const monthSel = document.getElementById('statsMonth');
       const yearSel = document.getElementById('statsYear');
       const refreshBtn = document.getElementById('refreshStatsBtn');
+      
       if (refreshBtn) {
         refreshBtn.addEventListener('click', async () => {
           if (!isAdmin) return;
           await computeMonthlyStats(parseInt(yearSel.value, 10), parseInt(monthSel.value, 10));
         });
       }
+      
       if (monthSel) {
         monthSel.addEventListener('change', async () => {
           if (!isAdmin) return;
           await computeMonthlyStats(parseInt(yearSel.value, 10), parseInt(monthSel.value, 10));
         });
       }
+      
       if (yearSel) {
         yearSel.addEventListener('change', async () => {
           if (!isAdmin) return;
           await computeMonthlyStats(parseInt(yearSel.value, 10), parseInt(monthSel.value, 10));
         });
       }
+      
       setupTableEditing();
       setupExtraFields();
-      window.addEventListener('beforeunload', () => {
-        commitOpenEditorToState();
-        saveAllData().catch(() => {});
+      
+      // ✅ Save before closing
+      window.addEventListener('beforeunload', async (e) => {
+        if (isCurrentlyEditing) {
+          commitOpenEditorToState();
+          // Force synchronous save attempt
+          if (canWriteNow()) {
+            try {
+              await saveAllData();
+            } catch (err) {
+              console.error('Failed to save on unload:', err);
+            }
+          }
+        }
         detachLiveListener();
       });
+      
       setView('auth');
     }
+    
     window.addEventListener('load', setupUI);
   </script>
 </body>
