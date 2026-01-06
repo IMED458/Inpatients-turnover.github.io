@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html lang="ka">
 <head>
   <meta charset="UTF-8" />
@@ -484,16 +485,44 @@
       setSaveIndicator('ინახება...');
       
       try {
+        // ✅ CRITICAL: First check if document exists and preserve text fields
+        const existingDoc = await db.collection('dailyData').doc(docId).get();
+        
+        let responsibleValue = payload.responsible;
+        let urgentValue = payload.urgent;
+        
+        // If document exists and has values, only overwrite if user changed them
+        if (existingDoc.exists) {
+          const existing = existingDoc.data() || {};
+          
+          // Preserve existing values if current values are empty
+          if (!payload.responsible && existing.responsible) {
+            responsibleValue = existing.responsible;
+          }
+          if (!payload.urgent && existing.urgent) {
+            urgentValue = existing.urgent;
+          }
+          
+          console.log('📝 Preserving text fields:', {
+            responsible: responsibleValue,
+            urgent: urgentValue
+          });
+        }
+        
         await db.collection('dailyData').doc(docId).set({
           rows: payload.rows,
-          responsible: payload.responsible,
-          urgent: payload.urgent,
+          responsible: responsibleValue,
+          urgent: urgentValue,
           locked: payload.locked,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge:true });
+        }, { merge: true });
         
         setSaveIndicator('შენახულია ✓');
-        console.log('✅ Saved successfully:', docId, payload);
+        console.log('✅ Saved successfully:', docId, {
+          rows: payload.rows.length,
+          responsible: responsibleValue,
+          urgent: urgentValue
+        });
       } catch (e) {
         console.error('❌ Save error:', e);
         setSaveIndicator('შეცდომა ✗');
@@ -684,8 +713,14 @@
         
         buildStateFromPrevAndToday(prevDoc, todayDoc);
         
-        // ✅ Save to ensure document exists
-        await enqueueSaveNow();
+        // ✅ CRITICAL FIX: Only save if document doesn't exist OR has no rows
+        // This prevents overwriting existing data
+        if (!todayDoc || !todayDoc.rows || todayDoc.rows.length === 0) {
+          console.log('💾 Creating new document for:', getDocId(selectedDate));
+          await saveAllData(); // Use saveAllData directly to avoid debounce delay
+        } else {
+          console.log('✓ Document already exists with data, skipping auto-save');
+        }
         
         if (isAdmin) {
           const month = selectedDate.getMonth();
