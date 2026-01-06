@@ -250,6 +250,7 @@
     };
     let db = null;
     let fbInited = false;
+    
     function setFbStatus(ok, text) {
       const dot1 = document.getElementById('fbDot');
       const txt1 = document.getElementById('fbText');
@@ -260,11 +261,13 @@
       if (dot2) { dot2.classList.remove('ok','bad'); dot2.classList.add(ok ? 'ok' : 'bad'); }
       if (txt2) txt2.textContent = text;
     }
+    
     function setSaveIndicator(text) {
       const el = document.getElementById('saveIndicator');
       if (!el) return;
       el.innerHTML = `შენახვა: <strong>${text}</strong>`;
     }
+    
     function initFirebase() {
       try {
         if (!fbInited) {
@@ -287,6 +290,7 @@
         setFbStatus(false, "Firebase: ვერ დაუკავშირდა ✗");
       }
     }
+    
     // ==========================================================
     // State
     // ==========================================================
@@ -295,7 +299,6 @@
     let isAdmin = false;
     let isLocked = false;
     
-    // ✅ ფიქსირებული რიგი — არასდროს იცვლება
     const BASE_DEPTS = [
       "ზრდასრულთა ემერჯენსი","ქირურგია","რეანიმაცია","კარდიორეანიმაცია","ბავშვთა ემერჯენსი","ბავშვთა რეანიმაცია",
       "ნევროლოგია","ნეიროქირურგია","ნეირორეანიმაცია","თორაკოქირურგია","ტრავმატოლოგია","ანგიოქირურგია",
@@ -307,16 +310,14 @@
     const deptOrder = [...BASE_DEPTS];
     let dataByDept = new Map();
     
-    // ✅ CRITICAL FIX: Track if we're currently editing to prevent race conditions
+    // ✅ CRITICAL: Track editing state
     let isCurrentlyEditing = false;
     let currentEditingCell = null;
     
     // Live listener
     let unsubscribeDay = null;
     
-    // ✅ REMOVED: lastAppliedUpdatedAtMs - ეს იყო პრობლემის წყარო
-    
-    // Save queue with debouncing
+    // Save queue
     let saveChain = Promise.resolve();
     let saveTimeout = null;
     
@@ -328,6 +329,7 @@
       if (!el) return;
       el.classList.toggle('show', !!on);
     }
+    
     function showToast(msg) {
       const t = document.createElement('div');
       t.textContent = msg;
@@ -335,24 +337,30 @@
       document.body.appendChild(t);
       setTimeout(() => t.remove(), 2200);
     }
+    
     function setView(view) {
       document.getElementById('authView').style.display = (view === 'auth') ? 'block' : 'none';
       document.getElementById('calendarView').style.display = (view === 'calendar') ? 'block' : 'none';
       document.getElementById('tableView').style.display = (view === 'table') ? 'block' : 'none';
     }
+    
     function formatDate(d) {
       const day = String(d.getDate()).padStart(2, '0');
       const month = String(d.getMonth() + 1).padStart(2, '0');
       const year = String(d.getFullYear()).slice(-2);
       return `${day}.${month}.${year}`;
     }
+    
     function getDocId(date) { return formatDate(date).replace(/\./g, '-'); }
+    
     function dateMinusOneDay(dateObj) {
       const d = new Date(dateObj.getTime());
       d.setDate(d.getDate() - 1);
       return d;
     }
+    
     function safeDeptKey(s) { return String(s || '').trim(); }
+    
     function computeFinal(v) {
       return (+v.initial||0) + (+v.admission||0) - (+v.discharge||0) - (+v.transfer||0) - (+v.mortality||0);
     }
@@ -368,11 +376,13 @@
     function updateLockButton() {
       const btn = document.getElementById('adminButton');
       const panel = document.getElementById('adminPanel');
+      
       if (!isAdmin) {
         btn.style.display = 'none';
         if (panel) panel.style.display = 'none';
         return;
       }
+      
       btn.style.display = 'inline-block';
       btn.textContent = isLocked ? 'განბლოკვა' : 'დაბლოკვა';
       if (panel) panel.style.display = 'block';
@@ -384,7 +394,7 @@
       document.getElementById('urgentOperations').disabled = disabled;
     }
     
-    // ✅ IMPROVED: Commit with better tracking
+    // ✅ CRITICAL: Commit editor without losing data
     function commitOpenEditorToState() {
       const input = document.querySelector('#tableBody input');
       if (!input) {
@@ -466,6 +476,8 @@
         row.final = computeFinal(row);
         return row;
       });
+      
+      // ✅ CRITICAL: Always get current textarea values
       return {
         rows,
         responsible: document.getElementById('responsiblePerson').value || '',
@@ -474,6 +486,7 @@
       };
     }
     
+    // ✅ CRITICAL FIX: NEVER overwrite with empty data
     async function saveAllData() {
       if (!db) return;
       if (!canWriteNow()) return;
@@ -484,44 +497,38 @@
       setSaveIndicator('ინახება...');
       
       try {
-        // ✅ CRITICAL: First check if document exists and preserve text fields
-        const existingDoc = await db.collection('dailyData').doc(docId).get();
+        // ✅ Read existing document first
+        const existingSnap = await db.collection('dailyData').doc(docId).get();
         
-        let responsibleValue = payload.responsible;
-        let urgentValue = payload.urgent;
+        let finalResponsible = payload.responsible;
+        let finalUrgent = payload.urgent;
         
-        // If document exists and has values, only overwrite if user changed them
-        if (existingDoc.exists) {
-          const existing = existingDoc.data() || {};
+        // ✅ NEVER replace non-empty with empty
+        if (existingSnap.exists) {
+          const existing = existingSnap.data() || {};
           
-          // Preserve existing values if current values are empty
-          if (!payload.responsible && existing.responsible) {
-            responsibleValue = existing.responsible;
-          }
-          if (!payload.urgent && existing.urgent) {
-            urgentValue = existing.urgent;
+          // If we're trying to save empty but DB has data, keep DB data
+          if (existing.responsible && !payload.responsible) {
+            finalResponsible = existing.responsible;
+            console.log('🛡️ Prevented overwriting responsible with empty string');
           }
           
-          console.log('📝 Preserving text fields:', {
-            responsible: responsibleValue,
-            urgent: urgentValue
-          });
+          if (existing.urgent && !payload.urgent) {
+            finalUrgent = existing.urgent;
+            console.log('🛡️ Prevented overwriting urgent with empty string');
+          }
         }
         
         await db.collection('dailyData').doc(docId).set({
           rows: payload.rows,
-          responsible: responsibleValue,
-          urgent: urgentValue,
+          responsible: finalResponsible,
+          urgent: finalUrgent,
           locked: payload.locked,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
         
         setSaveIndicator('შენახულია ✓');
-        console.log('✅ Saved successfully:', docId, {
-          rows: payload.rows.length,
-          responsible: responsibleValue,
-          urgent: urgentValue
-        });
+        console.log('✅ Saved:', docId, { rows: payload.rows.length, responsible: finalResponsible, urgent: finalUrgent });
       } catch (e) {
         console.error('❌ Save error:', e);
         setSaveIndicator('შეცდომა ✗');
@@ -529,17 +536,12 @@
       }
     }
     
-    // ✅ IMPROVED: Debounced save
     function enqueueSaveNow() {
       if (!db) return Promise.resolve();
       if (!canWriteNow()) return Promise.resolve();
       
-      // Clear existing timeout
-      if (saveTimeout) {
-        clearTimeout(saveTimeout);
-      }
+      if (saveTimeout) clearTimeout(saveTimeout);
       
-      // Debounce by 500ms
       return new Promise((resolve) => {
         saveTimeout = setTimeout(() => {
           saveChain = saveChain
@@ -549,7 +551,7 @@
               console.error('Save chain error:', e);
               resolve();
             });
-        }, 500);
+        }, 800);
       });
     }
     
@@ -560,7 +562,7 @@
       unsubscribeDay = null;
     }
     
-    // ✅ CRITICAL FIX: Improved live listener that respects editing state
+    // ✅ CRITICAL: Live listener that NEVER overwrites user input
     function attachLiveListener() {
       if (!db) return;
       detachLiveListener();
@@ -579,29 +581,26 @@
           const fromCache = !!snap.metadata.fromCache;
           const pending = !!snap.metadata.hasPendingWrites;
           
-          // ✅ Update Firebase status
           setFbStatus(true, pending
             ? "Firebase: ინახება..."
             : (fromCache ? "Firebase: ქეშიდან" : "Firebase: სინქრონიზებულია ✓")
           );
           
-          if (!pending) {
-            setSaveIndicator('შენახულია ✓');
-          }
+          if (!pending) setSaveIndicator('შენახულია ✓');
           
-          // ✅ CRITICAL: Don't overwrite data while user is editing
+          // ✅ CRITICAL: Don't apply updates while editing
           if (isCurrentlyEditing || document.querySelector('#tableBody input')) {
-            console.log('⚠️ User is editing, skipping remote update');
+            console.log('⚠️ Editing in progress, skipping remote update');
             return;
           }
           
-          // ✅ CRITICAL: Only apply if it's a real server update (not our own pending write)
+          // ✅ CRITICAL: Don't apply our own pending writes
           if (pending) {
-            console.log('⏳ Pending write, not applying remote data');
+            console.log('⏳ Pending write, not applying');
             return;
           }
           
-          console.log('📥 Applying remote data:', d);
+          console.log('📥 Applying remote data');
           applyDayDocToState(d);
         },
         (err) => {
@@ -611,6 +610,7 @@
       );
     }
     
+    // ✅ CRITICAL: NEVER overwrite textareas with empty values
     function applyDayDocToState(todayDoc) {
       const rows = normalizeRowsFromDoc(todayDoc);
       const saved = new Map();
@@ -632,8 +632,30 @@
       dataByDept = nextMap;
       isLocked = !!todayDoc?.locked;
       
-      document.getElementById('responsiblePerson').value = todayDoc?.responsible || '';
-      document.getElementById('urgentOperations').value = todayDoc?.urgent || '';
+      // ✅ CRITICAL: ONLY update textareas if new data is present
+      const rpField = document.getElementById('responsiblePerson');
+      const uoField = document.getElementById('urgentOperations');
+      
+      const remoteResponsible = todayDoc?.responsible || '';
+      const remoteUrgent = todayDoc?.urgent || '';
+      
+      // NEVER replace existing text with empty string
+      if (remoteResponsible) {
+        rpField.value = remoteResponsible;
+      } else if (!rpField.value) {
+        // Only set to empty if field is already empty
+        rpField.value = '';
+      } else {
+        console.log('🛡️ Keeping local responsible, remote is empty');
+      }
+      
+      if (remoteUrgent) {
+        uoField.value = remoteUrgent;
+      } else if (!uoField.value) {
+        uoField.value = '';
+      } else {
+        console.log('🛡️ Keeping local urgent, remote is empty');
+      }
       
       updateLockButton();
       setTextareasDisabled();
@@ -641,7 +663,7 @@
     }
     
     // ==========================================================
-    // Load logic (initial defaults from prev day final)
+    // Load logic
     // ==========================================================
     function buildStateFromPrevAndToday(prevDoc, todayDoc) {
       const prevRows = normalizeRowsFromDoc(prevDoc);
@@ -683,6 +705,7 @@
       dataByDept = next;
       isLocked = !!todayDoc?.locked;
       
+      // ✅ Load textareas from today's doc
       document.getElementById('responsiblePerson').value = todayDoc?.responsible || '';
       document.getElementById('urgentOperations').value = todayDoc?.urgent || '';
       
@@ -699,7 +722,6 @@
       setSaveIndicator('—');
       
       try {
-        // ✅ First attach listener
         attachLiveListener();
         
         const prevDate = dateMinusOneDay(selectedDate);
@@ -708,17 +730,16 @@
           readDayDoc(selectedDate)
         ]);
         
-        console.log('📂 Loaded docs - Prev:', prevDoc, 'Today:', todayDoc);
+        console.log('📂 Loaded - Prev:', prevDoc, 'Today:', todayDoc);
         
         buildStateFromPrevAndToday(prevDoc, todayDoc);
         
-        // ✅ CRITICAL FIX: Only save if document doesn't exist OR has no rows
-        // This prevents overwriting existing data
-        if (!todayDoc || !todayDoc.rows || todayDoc.rows.length === 0) {
-          console.log('💾 Creating new document for:', getDocId(selectedDate));
-          await saveAllData(); // Use saveAllData directly to avoid debounce delay
+        // ✅ Only save if document doesn't exist
+        if (!todayDoc) {
+          console.log('💾 Creating new document');
+          await saveAllData();
         } else {
-          console.log('✓ Document already exists with data, skipping auto-save');
+          console.log('✓ Document exists, loaded');
         }
         
         if (isAdmin) {
@@ -736,7 +757,7 @@
     }
     
     // ==========================================================
-    // Render (fixed order only — NEVER changes)
+    // Render
     // ==========================================================
     function renderTable() {
       const tbody = document.getElementById('tableBody');
@@ -791,7 +812,7 @@
     }
     
     // ==========================================================
-    // Editing (FIXED: always commit previous cell first)
+    // Editing
     // ==========================================================
     function setupTableEditing() {
       const tbody = document.getElementById('tableBody');
@@ -800,7 +821,6 @@
         const cell = e.target.closest('td');
         if (!cell) return;
         
-        // ✅ Commit any open editor first
         if (isCurrentlyEditing && currentEditingCell !== cell) {
           await commitOpenEditorAndSave();
         }
@@ -813,7 +833,6 @@
         if (!canEditCell(field)) return;
         if (cell.querySelector('input')) return;
         
-        // ✅ Mark as editing
         isCurrentlyEditing = true;
         currentEditingCell = cell;
         
@@ -855,7 +874,6 @@
         });
       });
       
-      // ✅ Click outside table
       document.addEventListener('mousedown', async (e) => {
         const isInsideTable = !!e.target.closest('#dataTable');
         if (!isInsideTable && isCurrentlyEditing) {
@@ -874,7 +892,7 @@
         if (textareaTimeout) clearTimeout(textareaTimeout);
         textareaTimeout = setTimeout(() => {
           if (canWriteNow()) enqueueSaveNow();
-        }, 1000);
+        }, 1500);
       };
       
       rp.addEventListener('input', debouncedSave);
@@ -968,7 +986,7 @@
     }
     
     // ==========================================================
-    // Admin monthly statistics
+    // Admin stats
     // ==========================================================
     const monthNames = ['იანვარი','თებერვალი','მარტი','აპრილი','მაისი','ივნისი','ივლისი','აგვისტო','სექტემბერი','ოქტომბერი','ნოემბერი','დეკემბერი'];
     
@@ -1050,7 +1068,7 @@
       
       const note = document.getElementById('statsNote');
       if (note) {
-        note.textContent = `სტატისტიკა: ${monthNames[monthIndex]} ${year} — Admission ითვლის მხოლოდ: ზრდასრულთა ემერჯენსი + ბავშვთა ემერჯენსი; Discharge/Mortality ითვლის ყველა დეპარტამენტზე.`;
+        note.textContent = `სტატისტიკა: ${monthNames[monthIndex]} ${year}`;
       }
     }
     
@@ -1120,7 +1138,6 @@
       
       document.getElementById('adminButton').addEventListener('click', toggleLock);
       
-      // Admin stats events
       const monthSel = document.getElementById('statsMonth');
       const yearSel = document.getElementById('statsYear');
       const refreshBtn = document.getElementById('refreshStatsBtn');
@@ -1149,11 +1166,9 @@
       setupTableEditing();
       setupExtraFields();
       
-      // ✅ Save before closing
       window.addEventListener('beforeunload', async (e) => {
         if (isCurrentlyEditing) {
           commitOpenEditorToState();
-          // Force synchronous save attempt
           if (canWriteNow()) {
             try {
               await saveAllData();
