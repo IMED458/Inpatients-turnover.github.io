@@ -481,6 +481,7 @@
         <button class="btn btn-nav" id="nextDayBtn" type="button">შემდეგი დღე</button>
         <button class="btn btn-calendar" id="showCalendarBtn" type="button">კალენდარი</button>
         <button class="btn btn-block" id="adminButton" type="button" style="display:none;"></button>
+        <button class="btn btn-nav" id="changePasswordBtn" type="button" style="display:none;">პაროლის შეცვლა</button>
       </div>
 
       <!-- Data table -->
@@ -577,6 +578,8 @@
     let currentYear = selectedDate.getFullYear();
     let isAdmin = false;
     let isLocked = false;
+    const AUTH_STORE_KEY = 'inpatientsAuth_v1';
+    const DEFAULT_AUTH = { admin: 'admin1', user: 'htmc' };
 
     // Department list - fixed order, never changes
     const BASE_DEPTS = [
@@ -659,12 +662,33 @@
       return true;
     }
 
+    function getAuthPasswords() {
+      try {
+        const raw = localStorage.getItem(AUTH_STORE_KEY);
+        if (!raw) return { ...DEFAULT_AUTH };
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return { ...DEFAULT_AUTH };
+        return {
+          admin: String(parsed.admin || DEFAULT_AUTH.admin),
+          user: String(parsed.user || DEFAULT_AUTH.user)
+        };
+      } catch {
+        return { ...DEFAULT_AUTH };
+      }
+    }
+
+    function saveAuthPasswords(auth) {
+      localStorage.setItem(AUTH_STORE_KEY, JSON.stringify(auth));
+    }
+
     function updateLockButton() {
       const btn = document.getElementById('adminButton');
+      const passBtn = document.getElementById('changePasswordBtn');
       const panel = document.getElementById('adminPanel');
       
       if (!isAdmin) {
         if (btn) btn.style.display = 'none';
+        if (passBtn) passBtn.style.display = 'none';
         if (panel) panel.style.display = 'none';
         return;
       }
@@ -673,6 +697,7 @@
         btn.style.display = 'inline-block';
         btn.textContent = isLocked ? 'განბლოკვა' : 'დაბლოკვა';
       }
+      if (passBtn) passBtn.style.display = 'inline-block';
       if (panel) panel.style.display = 'block';
     }
 
@@ -1267,6 +1292,51 @@
       showToast(isLocked ? 'დღე დაიბლოკა' : 'დღე განიბლოკა');
     }
 
+    function changePasswordByAdminChoice() {
+      if (!isAdmin) return;
+
+      const choice = prompt('აირჩიეთ პაროლის ცვლილება:\n1 - მხოლოდ ადმინის პაროლი\n2 - ყველა მომხმარებლის პაროლი', '1');
+      if (choice === null) return;
+      if (choice !== '1' && choice !== '2') {
+        alert('აირჩიეთ მხოლოდ 1 ან 2');
+        return;
+      }
+
+      const auth = getAuthPasswords();
+      const currentAdminPass = prompt('შეიყვანეთ მიმდინარე ადმინის პაროლი');
+      if (currentAdminPass === null) return;
+      if (currentAdminPass !== auth.admin) {
+        alert('ადმინის მიმდინარე პაროლი არასწორია');
+        return;
+      }
+
+      const newPass = prompt('შეიყვანეთ ახალი პაროლი (მინ. 4 სიმბოლო)');
+      if (newPass === null) return;
+      if (!newPass || newPass.length < 4) {
+        alert('ახალი პაროლი უნდა იყოს მინიმუმ 4 სიმბოლო');
+        return;
+      }
+
+      const confirmPass = prompt('გაიმეორეთ ახალი პაროლი');
+      if (confirmPass === null) return;
+      if (newPass !== confirmPass) {
+        alert('პაროლები არ ემთხვევა');
+        return;
+      }
+
+      if (choice === '1') {
+        auth.admin = newPass;
+        saveAuthPasswords(auth);
+        showToast('ადმინის პაროლი წარმატებით შეიცვალა');
+        return;
+      }
+
+      auth.admin = newPass;
+      auth.user = newPass;
+      saveAuthPasswords(auth);
+      showToast('ყველა მომხმარებლის პაროლი წარმატებით შეიცვალა');
+    }
+
     // ==========================================================
     // CALENDAR RENDERING
     // ==========================================================
@@ -1432,9 +1502,10 @@
     // ==========================================================
     function checkPassword() {
       const pass = document.getElementById('password').value.trim();
-      isAdmin = (pass === 'admin1');
+      const auth = getAuthPasswords();
+      isAdmin = (pass === auth.admin);
       
-      if (pass === 'htmc' || isAdmin) {
+      if (pass === auth.user || isAdmin) {
         setView('calendar');
         currentYear = selectedDate.getFullYear();
         renderCalendar(currentYear);
@@ -1492,6 +1563,7 @@
       };
       
       document.getElementById('adminButton').onclick = toggleLock;
+      document.getElementById('changePasswordBtn').onclick = changePasswordByAdminChoice;
       
       // Admin stats controls
       const refreshBtn = document.getElementById('refreshStatsBtn');
@@ -1537,5 +1609,4 @@
   </script>
 </body>
 </html>
-
 
