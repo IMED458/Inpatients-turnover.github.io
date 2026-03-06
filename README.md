@@ -1456,7 +1456,6 @@
         return;
       }
 
-      auth.admin = newPass;
       auth.user = newPass;
       await persistAuthPasswords(auth);
       closePasswordChangeModal();
