@@ -651,6 +651,7 @@
     let isLocked = false;
     const AUTH_STORE_KEY = 'inpatientsAuth_v1';
     const DEFAULT_AUTH = { admin: 'admin1', user: 'htmc' };
+    let authCache = { ...DEFAULT_AUTH };
 
     // Department list - fixed order, never changes
     const BASE_DEPTS = [
@@ -750,6 +751,49 @@
 
     function saveAuthPasswords(auth) {
       localStorage.setItem(AUTH_STORE_KEY, JSON.stringify(auth));
+    }
+
+    async function loadAuthPasswords(forceRemote = false) {
+      if (!forceRemote) {
+        const local = getAuthPasswords();
+        authCache = { ...local };
+      }
+
+      if (!db) return { ...authCache };
+
+      try {
+        const snap = await db.collection('settings').doc('auth').get();
+        if (snap.exists) {
+          const data = snap.data() || {};
+          const remoteAuth = {
+            admin: String(data.admin || authCache.admin || DEFAULT_AUTH.admin),
+            user: String(data.user || authCache.user || DEFAULT_AUTH.user)
+          };
+          authCache = remoteAuth;
+          saveAuthPasswords(remoteAuth);
+          return { ...remoteAuth };
+        }
+      } catch (e) {
+        console.warn('Auth load fallback to localStorage:', e);
+      }
+
+      return { ...authCache };
+    }
+
+    async function persistAuthPasswords(auth) {
+      const next = {
+        admin: String(auth.admin || DEFAULT_AUTH.admin),
+        user: String(auth.user || DEFAULT_AUTH.user)
+      };
+      authCache = next;
+      saveAuthPasswords(next);
+
+      if (!db) return;
+      try {
+        await db.collection('settings').doc('auth').set(next, { merge: true });
+      } catch (e) {
+        console.error('Auth save error:', e);
+      }
     }
 
     function openPasswordChangeModal() {
@@ -1382,10 +1426,10 @@
       showToast(isLocked ? 'დღე დაიბლოკა' : 'დღე განიბლოკა');
     }
 
-    function changePasswordByAdminChoice() {
+    async function changePasswordByAdminChoice() {
       if (!isAdmin) return;
       const scope = document.getElementById('passwordScope').value;
-      const auth = getAuthPasswords();
+      const auth = await loadAuthPasswords(true);
       const currentAdminPass = document.getElementById('currentAdminPassword').value;
       if (currentAdminPass !== auth.admin) {
         showToast('ადმინის მიმდინარე პაროლი არასწორია');
@@ -1406,7 +1450,7 @@
 
       if (scope === 'admin') {
         auth.admin = newPass;
-        saveAuthPasswords(auth);
+        await persistAuthPasswords(auth);
         closePasswordChangeModal();
         showToast('ადმინის პაროლი წარმატებით შეიცვალა');
         return;
@@ -1414,7 +1458,7 @@
 
       auth.admin = newPass;
       auth.user = newPass;
-      saveAuthPasswords(auth);
+      await persistAuthPasswords(auth);
       closePasswordChangeModal();
       showToast('ყველა მომხმარებლის პაროლი წარმატებით შეიცვალა');
     }
@@ -1582,9 +1626,9 @@
     // ==========================================================
     // AUTHENTICATION
     // ==========================================================
-    function checkPassword() {
+    async function checkPassword() {
       const pass = document.getElementById('password').value.trim();
-      const auth = getAuthPasswords();
+      const auth = await loadAuthPasswords(true);
       isAdmin = (pass === auth.admin);
       
       if (pass === auth.user || isAdmin) {
@@ -1602,6 +1646,7 @@
     // ==========================================================
     function setupUI() {
       initFirebase();
+      loadAuthPasswords();
       setSaveIndicator('—');
       
       // Login
