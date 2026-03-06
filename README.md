@@ -308,6 +308,55 @@
       font-size: 12px; 
       margin-top: 10px; 
     }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      padding: 16px;
+    }
+    .modal-backdrop.show { display: flex; }
+    .modal-card {
+      width: 100%;
+      max-width: 520px;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+      padding: 18px;
+    }
+    .modal-card h3 {
+      margin: 0 0 14px 0;
+      color: #2c3e50;
+    }
+    .modal-grid {
+      display: grid;
+      gap: 10px;
+    }
+    .modal-grid label {
+      font-size: 14px;
+      color: #2c3e50;
+      font-weight: 600;
+    }
+    .modal-grid select,
+    .modal-grid input {
+      width: 100%;
+      border: 1px solid #d0d0d0;
+      border-radius: 6px;
+      padding: 9px 10px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    .modal-actions {
+      margin-top: 14px;
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+    .btn-cancel { background: #7f8c8d; }
     .save-indicator { 
       margin-top: 8px; 
       font-size: 12px; 
@@ -512,6 +561,28 @@
       </div>
     </div>
   </div>
+  <div class="modal-backdrop" id="passwordModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="passwordModalTitle">
+      <h3 id="passwordModalTitle">პაროლის ცვლილება</h3>
+      <div class="modal-grid">
+        <label for="passwordScope">ცვლილების ტიპი</label>
+        <select id="passwordScope">
+          <option value="admin">მხოლოდ ადმინის პაროლი</option>
+          <option value="all">ყველა მომხმარებლის პაროლი</option>
+        </select>
+        <label for="currentAdminPassword">მიმდინარე ადმინის პაროლი</label>
+        <input type="password" id="currentAdminPassword" autocomplete="current-password">
+        <label for="newPasswordModal">ახალი პაროლი</label>
+        <input type="password" id="newPasswordModal" autocomplete="new-password">
+        <label for="confirmPasswordModal">გაიმეორე ახალი პაროლი</label>
+        <input type="password" id="confirmPasswordModal" autocomplete="new-password">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" id="cancelPasswordChangeBtn" type="button">გაუქმება</button>
+        <button class="btn btn-nav" id="savePasswordChangeBtn" type="button">შენახვა</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     // ==========================================================
@@ -679,6 +750,25 @@
 
     function saveAuthPasswords(auth) {
       localStorage.setItem(AUTH_STORE_KEY, JSON.stringify(auth));
+    }
+
+    function openPasswordChangeModal() {
+      const modal = document.getElementById('passwordModal');
+      if (!modal) return;
+      modal.classList.add('show');
+      modal.setAttribute('aria-hidden', 'false');
+      document.getElementById('passwordScope').value = 'admin';
+      document.getElementById('currentAdminPassword').value = '';
+      document.getElementById('newPasswordModal').value = '';
+      document.getElementById('confirmPasswordModal').value = '';
+      document.getElementById('currentAdminPassword').focus();
+    }
+
+    function closePasswordChangeModal() {
+      const modal = document.getElementById('passwordModal');
+      if (!modal) return;
+      modal.classList.remove('show');
+      modal.setAttribute('aria-hidden', 'true');
     }
 
     function updateLockButton() {
@@ -1294,39 +1384,30 @@
 
     function changePasswordByAdminChoice() {
       if (!isAdmin) return;
-
-      const choice = prompt('აირჩიეთ პაროლის ცვლილება:\n1 - მხოლოდ ადმინის პაროლი\n2 - ყველა მომხმარებლის პაროლი', '1');
-      if (choice === null) return;
-      if (choice !== '1' && choice !== '2') {
-        alert('აირჩიეთ მხოლოდ 1 ან 2');
-        return;
-      }
-
+      const scope = document.getElementById('passwordScope').value;
       const auth = getAuthPasswords();
-      const currentAdminPass = prompt('შეიყვანეთ მიმდინარე ადმინის პაროლი');
-      if (currentAdminPass === null) return;
+      const currentAdminPass = document.getElementById('currentAdminPassword').value;
       if (currentAdminPass !== auth.admin) {
-        alert('ადმინის მიმდინარე პაროლი არასწორია');
+        showToast('ადმინის მიმდინარე პაროლი არასწორია');
         return;
       }
 
-      const newPass = prompt('შეიყვანეთ ახალი პაროლი (მინ. 4 სიმბოლო)');
-      if (newPass === null) return;
+      const newPass = document.getElementById('newPasswordModal').value;
       if (!newPass || newPass.length < 4) {
-        alert('ახალი პაროლი უნდა იყოს მინიმუმ 4 სიმბოლო');
+        showToast('ახალი პაროლი უნდა იყოს მინიმუმ 4 სიმბოლო');
         return;
       }
 
-      const confirmPass = prompt('გაიმეორეთ ახალი პაროლი');
-      if (confirmPass === null) return;
+      const confirmPass = document.getElementById('confirmPasswordModal').value;
       if (newPass !== confirmPass) {
-        alert('პაროლები არ ემთხვევა');
+        showToast('პაროლები არ ემთხვევა');
         return;
       }
 
-      if (choice === '1') {
+      if (scope === 'admin') {
         auth.admin = newPass;
         saveAuthPasswords(auth);
+        closePasswordChangeModal();
         showToast('ადმინის პაროლი წარმატებით შეიცვალა');
         return;
       }
@@ -1334,6 +1415,7 @@
       auth.admin = newPass;
       auth.user = newPass;
       saveAuthPasswords(auth);
+      closePasswordChangeModal();
       showToast('ყველა მომხმარებლის პაროლი წარმატებით შეიცვალა');
     }
 
@@ -1563,7 +1645,12 @@
       };
       
       document.getElementById('adminButton').onclick = toggleLock;
-      document.getElementById('changePasswordBtn').onclick = changePasswordByAdminChoice;
+      document.getElementById('changePasswordBtn').onclick = openPasswordChangeModal;
+      document.getElementById('cancelPasswordChangeBtn').onclick = closePasswordChangeModal;
+      document.getElementById('savePasswordChangeBtn').onclick = changePasswordByAdminChoice;
+      document.getElementById('passwordModal').onclick = (e) => {
+        if (e.target.id === 'passwordModal') closePasswordChangeModal();
+      };
       
       // Admin stats controls
       const refreshBtn = document.getElementById('refreshStatsBtn');
@@ -1609,4 +1696,3 @@
   </script>
 </body>
 </html>
-
