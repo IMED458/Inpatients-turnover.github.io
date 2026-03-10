@@ -367,6 +367,314 @@
       color: #2c3e50; 
     }
     
+    /* ==========================================================
+       AUTH VIEW (REDESIGN)
+       ========================================================== */
+    body.auth-mode {
+      background: #edf2fb;
+      color: #1a365d;
+    }
+    body.auth-mode::before,
+    body.auth-mode::after {
+      content: '';
+      position: fixed;
+      pointer-events: none;
+      border-radius: 50%;
+      filter: blur(56px);
+      z-index: 0;
+    }
+    body.auth-mode::before {
+      width: 640px;
+      height: 640px;
+      right: -200px;
+      top: -220px;
+      background: rgba(147, 197, 253, 0.45);
+      animation: decorPulse 7s ease-in-out infinite;
+    }
+    body.auth-mode::after {
+      width: 560px;
+      height: 560px;
+      left: -180px;
+      bottom: -200px;
+      background: rgba(129, 140, 248, 0.35);
+    }
+    @keyframes decorPulse {
+      0%, 100% { transform: scale(1); opacity: 0.7; }
+      50% { transform: scale(1.08); opacity: 0.45; }
+    }
+    #authView {
+      width: 100%;
+      max-width: 448px; /* Tailwind max-w-md */
+      margin: 0 auto;
+      height: calc(100vh - 40px);
+      min-height: calc(100vh - 40px);
+      padding: 10px 0 28px 0;
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      gap: 16px;
+      text-align: center;
+      background: transparent;
+      box-shadow: none;
+      border-radius: 0;
+    }
+    #logo {
+      max-width: 300px;
+      width: min(300px, 100%);
+      height: auto;
+      margin: 0 auto 10px auto;
+      display: block;
+      object-fit: contain;
+      background: transparent;
+    }
+    .auth-brand {
+      text-align: center;
+      margin-bottom: 2px;
+    }
+    .auth-card {
+      position: relative;
+      text-align: left;
+      background: rgba(255, 255, 255, 0.94);
+      border-radius: 2.5rem; /* Tailwind rounded-[2.5rem] = 40px */
+      padding: 40px;
+      border: 1px solid rgba(255, 255, 255, 0.95);
+      box-shadow: 0 30px 52px rgba(30, 64, 175, 0.14);
+      overflow: hidden;
+    }
+    .auth-card-corner {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 126px;
+      height: 126px;
+      border-bottom-left-radius: 92px;
+      background: rgba(219, 234, 254, 0.65);
+      pointer-events: none;
+    }
+    .auth-card-title {
+      margin: 0 0 22px 0;
+      font-size: clamp(26px, 4vw, 34px);
+      color: #1e3a8a;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .auth-card-title-icon {
+      width: 30px;
+      height: 30px;
+      stroke: #3b82f6;
+      flex: 0 0 30px;
+    }
+    .auth-label {
+      display: block;
+      margin: 0 0 10px 6px;
+      color: rgba(30, 64, 175, 0.72);
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      font-size: 14px;
+    }
+    #authView #password {
+      width: 100%;
+      margin: 0;
+      height: 56px;
+      padding: 0 18px;
+      border-radius: 16px;
+      border: 2px solid transparent;
+      background: rgba(239, 246, 255, 0.86);
+      color: #1e3a8a;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      box-sizing: border-box;
+      outline: none;
+      transition: border-color .2s ease, background-color .2s ease;
+    }
+    #authView #password:focus {
+      border-color: #60a5fa;
+      background: #fff;
+    }
+    .auth-login-btn {
+      width: 100%;
+      margin-top: 18px;
+      height: 56px;
+      border-radius: 16px;
+      padding: 0 20px;
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      box-shadow: 0 14px 22px rgba(37, 99, 235, 0.35);
+      font-size: 18px;
+      letter-spacing: 0.01em;
+      transition: transform .2s ease, box-shadow .2s ease, filter .2s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    .auth-login-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 18px 24px rgba(37, 99, 235, 0.4);
+      filter: brightness(1.03);
+    }
+    .auth-login-arrow {
+      display: inline-block;
+      font-size: 22px;
+      transform: translateX(0);
+      transition: transform .25s ease;
+    }
+    .auth-login-btn:hover .auth-login-arrow {
+      transform: translateX(4px);
+    }
+    .auth-statusline {
+      margin-top: 16px;
+      text-align: center;
+      font-size: 13px;
+    }
+    .auth-statusline .pill {
+      border: 1px solid rgba(191, 219, 254, 0.9);
+      background: rgba(255, 255, 255, 0.95);
+      box-shadow: 0 6px 14px rgba(30, 64, 175, 0.08);
+    }
+    .phonebook-link {
+      text-decoration: none;
+      color: inherit;
+      display: block;
+      margin-top: auto;
+      padding-top: 54px;
+      transition: transform .3s ease;
+    }
+    .phonebook-link:hover {
+      transform: translateY(-5px);
+    }
+    .phonebook-card {
+      position: relative;
+      border-radius: 32px;
+      overflow: hidden;
+      background: linear-gradient(135deg, #2563eb, #4338ca);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      box-shadow: 0 24px 42px rgba(37, 99, 235, 0.3);
+      width: 100%;
+      max-width: 410px;
+      margin: 0 auto;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-align: left;
+      isolation: isolate;
+    }
+    .phonebook-ring {
+      position: absolute;
+      left: -44px;
+      bottom: -40px;
+      width: 170px;
+      height: 170px;
+      border: 16px solid rgba(255, 255, 255, 0.42);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 0;
+      animation: ringPulse 4s ease-in-out infinite;
+    }
+    @keyframes ringPulse {
+      0%, 100% { transform: scale(1); opacity: 0.1; }
+      50% { transform: scale(1.5); opacity: 0.32; }
+    }
+    .phonebook-icon-wrap {
+      position: relative;
+      z-index: 1;
+      width: 58px;
+      height: 58px;
+      flex: 0 0 58px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.22);
+      border: 1px solid rgba(255, 255, 255, 0.32);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+      transition: transform .3s ease;
+    }
+    .phonebook-link:hover .phonebook-icon-wrap {
+      transform: scale(1.1);
+    }
+    .phonebook-icon-wrap svg {
+      width: 30px;
+      height: 30px;
+      stroke: #fff;
+    }
+    .phonebook-copy {
+      position: relative;
+      z-index: 1;
+      flex: 1;
+      min-width: 0;
+    }
+    .phonebook-copy h3 {
+      margin: 0;
+      color: #fff;
+      font-size: 24px;
+      line-height: 1.1;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+    }
+    .phonebook-copy p {
+      margin: 8px 0 0 0;
+      color: rgba(219, 234, 254, 0.9);
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .phonebook-arrow-wrap {
+      position: relative;
+      z-index: 1;
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .phonebook-arrow-wrap svg {
+      width: 20px;
+      height: 20px;
+      stroke: #fff;
+      animation: arrowSlide 1.5s ease-in-out infinite;
+    }
+    @keyframes arrowSlide {
+      0%, 100% { transform: translateX(0); }
+      50% { transform: translateX(5px); }
+    }
+    @media (max-width: 700px) {
+      #authView {
+        min-height: auto;
+        padding: 14px 0 14px 0;
+      }
+      .auth-card {
+        border-radius: 30px;
+        padding: 26px 18px 22px 18px;
+      }
+      .auth-card-title {
+        font-size: clamp(22px, 7vw, 30px);
+        margin-bottom: 18px;
+      }
+      .auth-login-btn {
+        font-size: 17px;
+      }
+      .phonebook-card {
+        border-radius: 24px;
+        padding: 16px;
+      }
+      .phonebook-copy h3 {
+        font-size: clamp(18px, 5vw, 22px);
+      }
+      .phonebook-copy p {
+        font-size: 12px;
+      }
+    }
+    
     @media (max-width: 700px) { 
       .stats-grid { 
         grid-template-columns: 1fr; 
@@ -454,16 +762,54 @@
   <div class="page-wrapper">
     <!-- ========== LOGIN VIEW ========== -->
     <div id="authView">
-      <img src="tm_center_logo.png" alt="TM Center Logo" id="logo">
-      <h2>შესვლა</h2>
-      <input type="password" id="password" placeholder="პაროლი">
-      <button class="btn btn-nav" id="loginBtn" type="button">შესვლა</button>
-      <div class="statusline" style="margin-top:14px;">
-        <span class="pill">
-          <span class="dot" id="fbDot"></span>
-          <span id="fbText">Firebase: შემოწმება...</span>
-        </span>
+      <div class="auth-brand">
+        <img src="tm_center_logo_transparent.png" alt="TM Center Logo" id="logo">
       </div>
+
+      <div class="auth-card">
+        <div class="auth-card-corner"></div>
+        <h2 class="auth-card-title">
+          <svg class="auth-card-title-icon" viewBox="0 0 24 24" fill="none" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+            <path d="M10 17l5-5-5-5"></path>
+            <path d="M15 12H3"></path>
+          </svg>
+          ავტორიზაცია
+        </h2>
+        <label class="auth-label" for="password">პაროლი</label>
+        <input type="password" id="password" placeholder="••••••••">
+        <button class="btn btn-nav auth-login-btn" id="loginBtn" type="button">
+          შესვლა
+          <span class="auth-login-arrow">→</span>
+        </button>
+        <div class="statusline auth-statusline">
+          <span class="pill">
+            <span class="dot" id="fbDot"></span>
+            <span id="fbText">Firebase: შემოწმება...</span>
+          </span>
+        </div>
+      </div>
+
+      <a class="phonebook-link" href="https://phone.imed.com.ge/" target="_blank" rel="noopener noreferrer">
+        <div class="phonebook-card">
+          <div class="phonebook-ring"></div>
+          <div class="phonebook-icon-wrap" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.77 19.77 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.77 19.77 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.34 1.78.64 2.61a2 2 0 0 1-.45 2.11L8 9.91a16 16 0 0 0 6 6l1.47-1.3a2 2 0 0 1 2.11-.45c.83.3 1.71.52 2.61.64A2 2 0 0 1 22 16.92z"></path>
+            </svg>
+          </div>
+          <div class="phonebook-copy">
+            <h3>ექიმების სატელეფონო წიგნი</h3>
+            <p>კლინიკის შიდა დირექტორია</p>
+          </div>
+          <div class="phonebook-arrow-wrap" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14"></path>
+              <path d="m13 5 7 7-7 7"></path>
+            </svg>
+          </div>
+        </div>
+      </a>
     </div>
 
     <!-- ========== CALENDAR VIEW ========== -->
@@ -697,6 +1043,7 @@
       document.getElementById('authView').style.display = view === 'auth' ? 'block' : 'none';
       document.getElementById('calendarView').style.display = view === 'calendar' ? 'block' : 'none';
       document.getElementById('tableView').style.display = view === 'table' ? 'block' : 'none';
+      document.body.classList.toggle('auth-mode', view === 'auth');
     }
 
     function formatDate(d) {
