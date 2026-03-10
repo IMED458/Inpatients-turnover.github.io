@@ -373,6 +373,11 @@
     body.auth-mode {
       background: #edf2fb;
       color: #1a365d;
+      overflow-x: hidden;
+    }
+    body.auth-mode .page-wrapper {
+      padding-left: 0;
+      padding-right: 0;
     }
     body.auth-mode::before,
     body.auth-mode::after {
@@ -409,6 +414,7 @@
       height: calc(100vh - 40px);
       min-height: calc(100vh - 40px);
       padding: 10px 0 28px 0;
+      box-sizing: border-box;
       position: relative;
       z-index: 1;
       display: flex;
@@ -543,6 +549,7 @@
       display: block;
       margin-top: auto;
       padding-top: 54px;
+      width: 100%;
       transition: transform .3s ease;
     }
     .phonebook-link:hover {
@@ -559,6 +566,7 @@
       max-width: 410px;
       margin: 0 auto;
       padding: 20px;
+      box-sizing: border-box;
       display: flex;
       align-items: center;
       gap: 12px;
@@ -672,6 +680,152 @@
       }
       .phonebook-copy p {
         font-size: 12px;
+      }
+    }
+
+    /* ==========================================================
+       AUTH VIEW - PHONE OPTIMIZATION ONLY
+       ========================================================== */
+    @media (max-width: 540px) {
+      #authView {
+        max-width: 100%;
+        width: 100%;
+        height: auto;
+        min-height: 100dvh;
+        padding: calc(env(safe-area-inset-top) + 10px) 12px calc(env(safe-area-inset-bottom) + 14px) 12px;
+        box-sizing: border-box;
+        justify-content: flex-start;
+        gap: 14px;
+      }
+      #logo {
+        width: min(240px, 82vw);
+        margin-bottom: 6px;
+      }
+      .auth-card {
+        border-radius: 28px;
+        padding: 24px 16px 18px 16px;
+      }
+      .auth-card-corner {
+        width: 92px;
+        height: 92px;
+        border-bottom-left-radius: 70px;
+      }
+      .auth-card-title {
+        font-size: clamp(32px, 8vw, 42px);
+        margin-bottom: 16px;
+      }
+      .auth-card-title-icon {
+        width: 26px;
+        height: 26px;
+        flex-basis: 26px;
+      }
+      .auth-label {
+        font-size: 13px;
+        margin: 0 0 8px 4px;
+      }
+      #authView #password {
+        height: 52px;
+        font-size: 17px;
+        border-radius: 14px;
+      }
+      .auth-login-btn {
+        height: 52px;
+        border-radius: 14px;
+        margin-top: 14px;
+        font-size: 17px;
+      }
+      .auth-login-arrow {
+        font-size: 20px;
+      }
+      .auth-statusline {
+        margin-top: 12px;
+      }
+      .phonebook-link {
+        margin-top: auto;
+        padding-top: 16px;
+      }
+      .phonebook-card {
+        width: 100%;
+        max-width: none;
+        border-radius: 24px;
+        padding: 14px;
+        gap: 8px;
+      }
+      .phonebook-ring {
+        left: -34px;
+        bottom: -32px;
+        width: 132px;
+        height: 132px;
+        border-width: 11px;
+      }
+      .phonebook-icon-wrap {
+        width: 50px;
+        height: 50px;
+        flex-basis: 50px;
+        border-radius: 14px;
+      }
+      .phonebook-icon-wrap svg {
+        width: 25px;
+        height: 25px;
+      }
+      .phonebook-copy h3 {
+        font-size: clamp(15px, 5.2vw, 20px);
+        line-height: 1.12;
+        overflow-wrap: anywhere;
+      }
+      .phonebook-copy p {
+        font-size: 10.5px;
+        margin-top: 4px;
+        overflow-wrap: anywhere;
+      }
+      .phonebook-arrow-wrap {
+        width: 34px;
+        height: 34px;
+        flex-basis: 34px;
+        flex-shrink: 0;
+      }
+      .phonebook-arrow-wrap svg {
+        width: 16px;
+        height: 16px;
+      }
+      .phonebook-icon-wrap {
+        flex-shrink: 0;
+      }
+    }
+
+    @media (max-width: 390px) {
+      #authView {
+        padding-left: 8px;
+        padding-right: 8px;
+        gap: 12px;
+      }
+      #logo {
+        width: min(210px, 78vw);
+      }
+      .auth-card {
+        border-radius: 24px;
+        padding: 20px 14px 16px 14px;
+      }
+      .auth-card-title {
+        font-size: clamp(28px, 7.6vw, 34px);
+      }
+      #authView #password,
+      .auth-login-btn {
+        height: 50px;
+      }
+      .phonebook-link {
+        padding-top: 12px;
+      }
+      .phonebook-card {
+        border-radius: 20px;
+        padding: 12px;
+        gap: 8px;
+      }
+      .phonebook-copy h3 {
+        font-size: clamp(14px, 4.8vw, 18px);
+      }
+      .phonebook-copy p {
+        font-size: 10px;
       }
     }
     
