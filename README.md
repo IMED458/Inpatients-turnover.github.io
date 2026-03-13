@@ -1176,6 +1176,10 @@
     // Save queue
     let saveChain = Promise.resolve();
     let saveTimeout = null;
+    const extraFieldState = {
+      responsiblePerson: { dirty: false, lastRemoteValue: '' },
+      urgentOperations: { dirty: false, lastRemoteValue: '' }
+    };
 
     // ==========================================================
     // HELPER FUNCTIONS
@@ -1219,6 +1223,55 @@
 
     function safeDeptKey(s) { 
       return String(s || '').trim(); 
+    }
+
+    function getExtraFieldIds() {
+      return ['responsiblePerson', 'urgentOperations'];
+    }
+
+    function getExtraFieldValue(fieldId) {
+      const el = document.getElementById(fieldId);
+      return el ? el.value || '' : '';
+    }
+
+    function setExtraFieldValue(fieldId, value, options = {}) {
+      const el = document.getElementById(fieldId);
+      if (!el) return;
+
+      const normalized = value || '';
+      const state = extraFieldState[fieldId];
+      const isFocused = document.activeElement === el;
+      const shouldPreserveLocal = !options.force && state && (state.dirty || isFocused);
+
+      if (shouldPreserveLocal) return;
+
+      el.value = normalized;
+
+      if (state) {
+        state.lastRemoteValue = normalized;
+        state.dirty = false;
+      }
+    }
+
+    function markExtraFieldDirty(fieldId) {
+      const state = extraFieldState[fieldId];
+      if (state) state.dirty = true;
+    }
+
+    function hasDirtyExtraFields() {
+      return getExtraFieldIds().some((fieldId) => !!extraFieldState[fieldId]?.dirty);
+    }
+
+    function syncExtraFieldAfterSave(fieldId, savedValue) {
+      const el = document.getElementById(fieldId);
+      const state = extraFieldState[fieldId];
+      if (!el || !state) return;
+
+      const normalized = savedValue || '';
+      state.lastRemoteValue = normalized;
+      if ((el.value || '') === normalized) {
+        state.dirty = false;
+      }
     }
 
     function computeFinal(v) {
@@ -1391,8 +1444,8 @@
 
     async function commitOpenEditorAndSave() {
       const changed = commitOpenEditorToState();
-      if (changed) {
-        await enqueueSaveNow();
+      if (changed || hasDirtyExtraFields() || !!saveTimeout) {
+        await flushPendingSaveNow();
       }
     }
 
@@ -1440,8 +1493,8 @@
       
       return {
         rows,
-        responsible: document.getElementById('responsiblePerson').value || '',
-        urgent: document.getElementById('urgentOperations').value || '',
+        responsible: getExtraFieldValue('responsiblePerson'),
+        urgent: getExtraFieldValue('urgentOperations'),
         locked: !!isLocked
       };
     }
@@ -1454,6 +1507,8 @@
       
       const docId = getDocId(selectedDate);
       const payload = exportPayloadForSave();
+      const responsibleDirty = !!extraFieldState.responsiblePerson?.dirty;
+      const urgentDirty = !!extraFieldState.urgentOperations?.dirty;
       
       setSaveIndicator('ინახება...');
       
@@ -1468,12 +1523,12 @@
         if (existingSnap.exists) {
           const existing = existingSnap.data() || {};
           
-          if (existing.responsible && !payload.responsible) {
+          if (existing.responsible && !payload.responsible && !responsibleDirty) {
             finalResponsible = existing.responsible;
             console.log('🛡️ Protected: kept existing responsible field');
           }
           
-          if (existing.urgent && !payload.urgent) {
+          if (existing.urgent && !payload.urgent && !urgentDirty) {
             finalUrgent = existing.urgent;
             console.log('🛡️ Protected: kept existing urgent field');
           }
@@ -1489,6 +1544,8 @@
         }, { merge: true });
         
         setSaveIndicator('შენახულია ✓');
+        syncExtraFieldAfterSave('responsiblePerson', finalResponsible);
+        syncExtraFieldAfterSave('urgentOperations', finalUrgent);
         console.log('✅ Saved successfully:', docId, {
           rows: payload.rows.length,
           responsible: finalResponsible ? 'yes' : 'empty',
@@ -1509,6 +1566,7 @@
       
       return new Promise(resolve => {
         saveTimeout = setTimeout(() => {
+          saveTimeout = null;
           saveChain = saveChain
             .then(() => saveAllData())
             .then(resolve)
@@ -1518,6 +1576,23 @@
             });
         }, 800);
       });
+    }
+
+    function flushPendingSaveNow() {
+      if (!db || !canWriteNow()) return Promise.resolve();
+
+      if (saveTimeout) {
+        clearTimeout(saveTimeout);
+        saveTimeout = null;
+      }
+
+      saveChain = saveChain
+        .then(() => saveAllData())
+        .catch(err => {
+          console.error('Immediate save error:', err);
+        });
+
+      return saveChain;
     }
 
     // ==========================================================
@@ -1610,24 +1685,11 @@
       dataByDept = next;
       isLocked = !!doc?.locked;
       
-      // ✅ CRITICAL: NEVER overwrite textareas with empty strings
-      const rpField = document.getElementById('responsiblePerson');
-      const uoField = document.getElementById('urgentOperations');
       const remoteResp = doc?.responsible || '';
       const remoteUrg = doc?.urgent || '';
-      
-      // Only update if remote has data OR local is already empty
-      if (remoteResp || !rpField.value) {
-        rpField.value = remoteResp;
-      } else {
-        console.log('🛡️ Protected: keeping local responsible value (remote is empty)');
-      }
-      
-      if (remoteUrg || !uoField.value) {
-        uoField.value = remoteUrg;
-      } else {
-        console.log('🛡️ Protected: keeping local urgent value (remote is empty)');
-      }
+
+      setExtraFieldValue('responsiblePerson', remoteResp);
+      setExtraFieldValue('urgentOperations', remoteUrg);
       
       updateLockButton();
       setTextareasDisabled();
@@ -1680,9 +1742,9 @@
       dataByDept = next;
       isLocked = !!todayDoc?.locked;
       
-      // Set textareas from today's doc
-      document.getElementById('responsiblePerson').value = todayDoc?.responsible || '';
-      document.getElementById('urgentOperations').value = todayDoc?.urgent || '';
+      // Changing the selected date resets local dirty state to the loaded document.
+      setExtraFieldValue('responsiblePerson', todayDoc?.responsible || '', { force: true });
+      setExtraFieldValue('urgentOperations', todayDoc?.urgent || '', { force: true });
       
       updateLockButton();
       setTextareasDisabled();
@@ -1864,7 +1926,7 @@
           currentEditingCell = null;
           
           renderTable();
-          await enqueueSaveNow();
+          await flushPendingSaveNow();
         };
         
         input.addEventListener('blur', commit, { once: true });
@@ -1894,7 +1956,7 @@
     // TEXTAREA EDITING
     // ==========================================================
     function setupExtraFields() {
-      const fields = ['responsiblePerson', 'urgentOperations'];
+      const fields = getExtraFieldIds();
       
       fields.forEach(id => {
         const el = document.getElementById(id);
@@ -1902,10 +1964,17 @@
         
         el.addEventListener('input', () => {
           if (!canWriteNow()) return;
+          markExtraFieldDirty(id);
           clearTimeout(timeout);
           timeout = setTimeout(() => {
             enqueueSaveNow();
           }, 1500);
+        });
+
+        el.addEventListener('blur', async () => {
+          clearTimeout(timeout);
+          if (!canWriteNow() || !extraFieldState[id]?.dirty) return;
+          await flushPendingSaveNow();
         });
       });
     }
@@ -1923,7 +1992,7 @@
       setTextareasDisabled();
       renderTable();
       
-      await enqueueSaveNow();
+      await flushPendingSaveNow();
       showToast(isLocked ? 'დღე დაიბლოკა' : 'დღე განიბლოკა');
     }
 
@@ -2229,8 +2298,29 @@
         if (isCurrentlyEditing) {
           commitOpenEditorToState();
         }
+        if (hasDirtyExtraFields() || saveTimeout) {
+          flushPendingSaveNow();
+        }
         detachLiveListener();
       };
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden' && (hasDirtyExtraFields() || saveTimeout || isCurrentlyEditing)) {
+          if (isCurrentlyEditing) {
+            commitOpenEditorToState();
+          }
+          flushPendingSaveNow();
+        }
+      });
+
+      window.addEventListener('pagehide', () => {
+        if (hasDirtyExtraFields() || saveTimeout || isCurrentlyEditing) {
+          if (isCurrentlyEditing) {
+            commitOpenEditorToState();
+          }
+          flushPendingSaveNow();
+        }
+      });
       
       // Start with auth view
       setView('auth');
