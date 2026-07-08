@@ -1,313 +1,325 @@
 <!DOCTYPE html>
 <html lang="ka">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>პაციენტთა ბრუნვა</title>
-  <link rel="icon" type="image/png" href="tm_center_logo12.png">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ყოველდღიური ბრუნვა — iMED</title>
   <link rel="stylesheet" href="style.css">
-
-  <!-- Firebase (Compat) -->
-  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-analytics-compat.js"></script>
 </head>
 <body>
-  <div class="page-wrapper">
 
-    <!-- ========== LOGIN VIEW ========== -->
-    <div id="authView">
-      <div class="auth-brand">
-        <img src="tm_center_logo_transparent.png" alt="TM Center Logo" id="logo">
+<!-- ═══════════════════════════════════════════════════════
+     AUTH VIEW
+══════════════════════════════════════════════════════════ -->
+<div id="authView">
+  <div class="auth-container">
+    <div class="auth-logo">iMED</div>
+    <h2 class="auth-title">ყოველდღიური ბრუნვა</h2>
+    <div class="auth-form">
+      <div class="auth-field">
+        <label for="username">მომხმარებელი</label>
+        <input type="text" id="username" placeholder="მომხმარებლის სახელი" autocomplete="username">
       </div>
+      <div class="auth-field">
+        <label for="password">პაროლი</label>
+        <input type="password" id="password" placeholder="პაროლი" autocomplete="current-password">
+      </div>
+      <button id="loginBtn" class="auth-btn">შესვლა <span class="auth-login-arrow">→</span></button>
+    </div>
+    <div class="auth-status">
+      <span class="fb-dot" id="fbDot2"></span>
+      <span id="fbText2">Firebase: შემოწმება...</span>
+    </div>
+  </div>
+</div>
 
-      <div class="auth-card">
-        <div class="auth-card-corner"></div>
-        <h2 class="auth-card-title">
-          <svg class="auth-card-title-icon" viewBox="0 0 24 24" fill="none" stroke-width="2.3"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
-            <path d="M10 17l5-5-5-5"/>
-            <path d="M15 12H3"/>
-          </svg>
-          ავტორიზაცია
-        </h2>
+<!-- ═══════════════════════════════════════════════════════
+     CALENDAR VIEW
+══════════════════════════════════════════════════════════ -->
+<div id="calendarView" style="display:none;">
+  <div class="status-line">
+    <span class="fb-dot" id="fbDot"></span>
+    <span id="fbText">Firebase: შემოწმება...</span>
+    <span style="margin-left:auto;">
+      <button id="logoutBtnCal" class="btn btn-sm-logout">გამოსვლა</button>
+    </span>
+  </div>
+  <div class="calendar-header">
+    <button id="prevYearBtn" class="btn">◄ წინა</button>
+    <h2 id="calendarTitle">კალენდარი</h2>
+    <button id="nextYearBtn" class="btn">შემდეგი ►</button>
+  </div>
+  <div id="calendarContainer"></div>
+</div>
 
-        <label class="auth-label" for="username">მომხმარებელი</label>
-        <input type="text" id="username" placeholder="მომხმარებლის სახელი"
-               autocomplete="username" spellcheck="false">
+<!-- ═══════════════════════════════════════════════════════
+     TABLE VIEW
+══════════════════════════════════════════════════════════ -->
+<div id="tableView" style="display:none;">
+  <div class="status-line">
+    <span class="fb-dot" id="fbDotT"></span>
+    <span id="fbTextT">Firebase</span>
+    <span id="saveIndicator" style="margin-left:12px;font-size:12px;color:#888;">შენახვა: —</span>
+    <span style="margin-left:auto;">
+      <button id="logoutBtn" class="btn btn-sm-logout">გამოსვლა</button>
+    </span>
+  </div>
 
-        <label class="auth-label" for="password">პაროლი</label>
-        <input type="password" id="password" placeholder="••••••••"
-               autocomplete="current-password">
+  <!-- Dept user info bar -->
+  <div id="deptUserInfo" style="display:none;" class="dept-user-bar"></div>
 
-        <button class="btn btn-nav auth-login-btn" id="loginBtn" type="button">
-          შესვლა <span class="auth-login-arrow">→</span>
-        </button>
+  <div class="table-controls">
+    <button id="showCalendarBtn" class="btn">◄ კალენდარი</button>
+    <button id="prevDayBtn" class="btn">◄ წინა დღე</button>
+    <strong id="selectedDate" style="font-size:18px;"></strong>
+    <button id="nextDayBtn" class="btn">შემდეგი დღე ►</button>
+    <button id="exportBtn" class="btn btn-export">🖨 ბეჭდვა</button>
+    <button id="adminButton" class="btn btn-lock" style="display:none;">დაბლოკვა</button>
+    <button id="changePasswordBtn" class="btn btn-pass" style="display:none;">პაროლი</button>
+  </div>
 
-        <div class="statusline auth-statusline">
-          <span class="pill">
-            <span class="dot" id="fbDot"></span>
-            <span id="fbText">Firebase: შემოწმება...</span>
-          </span>
+  <table id="dataTable">
+    <thead>
+      <tr>
+        <th>განყოფილება</th>
+        <th>საწყისი</th>
+        <th>შემოსვლა</th>
+        <th>გაწერა</th>
+        <th>გადაყვანა</th>
+        <th>ლეტალობა</th>
+        <th>საბოლოო</th>
+      </tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+
+  <div class="extra-fields">
+    <div class="extra-field">
+      <label for="responsiblePerson">მორიგე პასუხისმგებელი პირი</label>
+      <textarea id="responsiblePerson" rows="2" placeholder="სახელი, გვარი..."></textarea>
+    </div>
+    <div class="extra-field">
+      <label for="urgentOperations">სასწრაფო ოპერაციები</label>
+      <textarea id="urgentOperations" rows="3" placeholder="ოპერაციების ჩამონათვალი..."></textarea>
+    </div>
+  </div>
+
+  <!-- ADMIN PANEL -->
+  <div id="adminPanel" style="display:none;" class="admin-panel">
+    <div class="admin-tabs">
+      <button class="admin-tab-btn active" data-tab="stats">სტატისტიკა</button>
+      <button class="admin-tab-btn" data-tab="users">იუზერების მართვა</button>
+      <button class="admin-tab-btn" data-tab="backups">ბექაფები</button>
+    </div>
+
+    <!-- Stats tab -->
+    <div id="tabStats" class="admin-tab-pane active">
+      <div class="stats-controls">
+        <select id="statsMonth"></select>
+        <select id="statsYear"></select>
+        <button id="refreshStatsBtn" class="btn btn-sm-edit">განახლება</button>
+      </div>
+      <p id="statsNote" style="color:#666;margin:6px 0 12px;font-size:13px;"></p>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">შემოსვლა (ემერჯ.)</div>
+          <div class="stat-value" id="statAdmission">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">გაწერა (სულ)</div>
+          <div class="stat-value" id="statDischarge">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">ლეტალობა (სულ)</div>
+          <div class="stat-value" id="statMortality">—</div>
         </div>
       </div>
+    </div>
 
-      <a class="phonebook-link" href="https://phone.imed.com.ge/" target="_blank" rel="noopener noreferrer">
-        <div class="phonebook-card">
-          <div class="phonebook-ring"></div>
-          <div class="phonebook-icon-wrap" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.77 19.77 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.77 19.77 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.34 1.78.64 2.61a2 2 0 0 1-.45 2.11L8 9.91a16 16 0 0 0 6 6l1.47-1.3a2 2 0 0 1 2.11-.45c.83.3 1.71.52 2.61.64A2 2 0 0 1 22 16.92z"/>
-            </svg>
-          </div>
-          <div class="phonebook-copy">
-            <h3>ექიმების სატელეფონო წიგნი</h3>
-            <p>კლინიკის შიდა დირექტორია</p>
-          </div>
-          <div class="phonebook-arrow-wrap" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M5 12h14"/><path d="m13 5 7 7-7 7"/>
-            </svg>
-          </div>
-        </div>
-      </a>
-    </div><!-- /authView -->
-
-
-    <!-- ========== CALENDAR VIEW ========== -->
-    <div id="calendarView" style="display:none;">
-      <div class="header">
-        <h1>პაციენტთა ბრუნვა</h1>
-        <h2 id="calendarTitle">2026 წლის კალენდარი</h2>
+    <!-- Users tab -->
+    <div id="tabUsers" class="admin-tab-pane">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <h3 style="margin:0;">იუზერების მართვა</h3>
+        <button id="createUserBtn" class="btn btn-sm-edit">+ ახალი იუზერი</button>
       </div>
-      <div class="controls">
-        <button class="btn btn-nav"    id="prevYearBtn"   type="button">წინა წელი</button>
-        <button class="btn btn-nav"    id="nextYearBtn"   type="button">შემდეგი წელი</button>
-        <button class="btn btn-logout" id="logoutBtnCal"  type="button">გამოსვლა</button>
-      </div>
-      <div class="calendar-container" id="calendarContainer"></div>
-    </div><!-- /calendarView -->
-
-
-    <!-- ========== TABLE VIEW ========== -->
-    <div id="tableView" style="display:none;">
-      <div class="header">
-        <h1>პაციენტთა ბრუნვა</h1>
-        <h2>Inpatients turnover — <span id="selectedDate">--.--.--</span></h2>
-        <div class="statusline">
-          <span class="pill">
-            <span class="dot" id="fbDot2"></span>
-            <span id="fbText2">Firebase: შემოწმება...</span>
-          </span>
-        </div>
-        <div class="save-indicator" id="saveIndicator">შენახვა: <strong>—</strong></div>
-      </div>
-
-      <!-- Admin panel (tabs: სტატისტიკა | იუზერების მართვა) -->
-      <div class="admin-panel" id="adminPanel">
-        <div class="admin-tabs">
-          <button class="admin-tab-btn active" data-tab="stats"  id="tabBtnStats">სტატისტიკა</button>
-          <button class="admin-tab-btn"        data-tab="users"  id="tabBtnUsers">იუზერების მართვა</button>
-        </div>
-
-        <!-- Stats tab -->
-        <div class="admin-tab-pane active" id="tabStats">
-          <div class="admin-panel-header">
-            <div class="admin-panel-title">სტატისტიკა (თვე)</div>
-            <div class="admin-panel-controls">
-              <select class="select" id="statsMonth"></select>
-              <select class="select" id="statsYear"></select>
-              <button class="btn btn-nav" id="refreshStatsBtn" type="button">განახლება</button>
-            </div>
-          </div>
-          <div class="stats-grid">
-            <div class="stat-card">
-              <div class="stat-label">თვეში შემოსული (Admission)</div>
-              <div class="stat-value" id="statAdmission">—</div>
-              <div class="stat-sub">მხოლოდ: ზრდასრულთა ემერჯენსი + ბავშვთა ემერჯენსი</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">თვეში გაწერილი (Discharge)</div>
-              <div class="stat-value" id="statDischarge">—</div>
-              <div class="stat-sub">ჯამი ყველა დეპარტამენტზე</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">თვეში გარდაცვლილი (Mortality)</div>
-              <div class="stat-value" id="statMortality">—</div>
-              <div class="stat-sub">ჯამი ყველა დეპარტამენტზე</div>
-            </div>
-          </div>
-          <div class="small-note" id="statsNote"></div>
-        </div><!-- /tabStats -->
-
-        <!-- User management tab -->
-        <div class="admin-tab-pane" id="tabUsers">
-          <div class="user-mgmt-toolbar">
-            <button class="btn btn-nav" id="createUserBtn" type="button">+ ახალი იუზერი</button>
-          </div>
-          <div style="overflow-x:auto;">
-            <table class="user-table">
-              <thead>
-                <tr>
-                  <th>მომხმარებელი</th>
-                  <th>განყოფილება</th>
-                  <th>სტატუსი</th>
-                  <th>პაროლის ტიპი</th>
-                  <th>შექმნილია</th>
-                  <th>განახლდა</th>
-                  <th>მოქმედება</th>
-                </tr>
-              </thead>
-              <tbody id="userTableBody">
-                <tr><td colspan="7" style="text-align:center;color:#999;padding:16px;">იტვირთება...</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div><!-- /tabUsers -->
-      </div><!-- /adminPanel -->
-
-      <!-- Department user info bar -->
-      <div class="dept-user-info" id="deptUserInfo"
-           style="display:none; max-width:1100px; margin:0 auto 10px auto;"></div>
-
-      <!-- Controls row -->
-      <div class="controls">
-        <button class="btn btn-export"   id="exportBtn"         type="button">Export PDF</button>
-        <button class="btn btn-nav"      id="prevDayBtn"        type="button">წინა დღე</button>
-        <button class="btn btn-nav"      id="nextDayBtn"        type="button">შემდეგი დღე</button>
-        <button class="btn btn-calendar" id="showCalendarBtn"   type="button">კალენდარი</button>
-        <button class="btn btn-block"    id="adminButton"       type="button" style="display:none;"></button>
-        <button class="btn btn-nav"      id="changePasswordBtn" type="button" style="display:none;">პაროლის შეცვლა</button>
-        <button class="btn btn-logout"   id="logoutBtn"         type="button">გამოსვლა</button>
-      </div>
-
-      <!-- Data table -->
-      <div class="table-container">
-        <div class="overlay" id="loadingOverlay">იტვირთება...</div>
-        <table id="dataTable">
+      <div class="user-table-wrap">
+        <table class="user-table">
           <thead>
             <tr>
-              <th>დეპარტამენტი</th>
-              <th>საწყისი</th>
-              <th>შემოსვლა</th>
-              <th>გაწერა</th>
-              <th>გადასვლა</th>
-              <th>ლეტალობა</th>
-              <th>საბოლოო</th>
+              <th>სახელი</th><th>განყოფილება</th><th>სტატუსი</th>
+              <th>პაროლი</th><th>შეიქმნა</th><th>განახლდა</th><th>მოქმედება</th>
             </tr>
           </thead>
-          <tbody id="tableBody"></tbody>
+          <tbody id="userTableBody"></tbody>
         </table>
       </div>
+    </div>
 
-      <!-- Extra text fields -->
-      <div class="extra-fields">
-        <label><strong>პასუხისმგებელი მორიგე:</strong></label><br>
-        <textarea id="responsiblePerson"></textarea><br><br>
-        <label><strong>ურგენტული ოპერაციები:</strong></label><br>
-        <textarea id="urgentOperations"></textarea>
+    <!-- Backups tab -->
+    <div id="tabBackups" class="admin-tab-pane">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+        <h3 style="margin:0;">ბექაფები</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button id="createBackupBtn" class="btn btn-sm-edit">+ დღევანდელი ბექაფი</button>
+          <button id="backupAllBtn" class="btn btn-sm-pass">ყველა დღის ბექაფი</button>
+        </div>
       </div>
-    </div><!-- /tableView -->
-
-  </div><!-- /page-wrapper -->
-
-
-  <!-- ===== FIRST-LOGIN PASSWORD CHANGE MODAL ===== -->
-  <div class="modal-backdrop" id="firstLoginModal" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true">
-      <h3>🔒 პაროლის განახლება სავალდებულოა</h3>
-      <p>პირველი შესვლისთვის საჭიროა მუდმივი პაროლის დაყენება. ერთჯერადი პაროლი გაუქმდება.</p>
-      <div class="modal-grid">
-        <label for="flNewPw">ახალი პაროლი (მინ. 6 სიმბოლო)</label>
-        <input type="password" id="flNewPw" autocomplete="new-password">
-        <label for="flConfirmPw">გაიმეორე ახალი პაროლი</label>
-        <input type="password" id="flConfirmPw" autocomplete="new-password">
-      </div>
-      <div class="modal-actions">
-        <button class="btn btn-nav" id="flSaveBtn" type="button">პაროლის შენახვა</button>
+      <p style="color:#666;font-size:12px;margin:0 0 10px;">ბოლო 200 ბექაფი ნაჩვენებია. ადმინი ავტომატურად ინახება შენახვისას.</p>
+      <div class="backup-table-wrap">
+        <table class="backup-table">
+          <thead>
+            <tr><th>შეიქმნა</th><th>თარიღი</th><th>შენიშვნა</th><th>მოქმედება</th></tr>
+          </thead>
+          <tbody id="backupTableBody">
+            <tr><td colspan="4" style="text-align:center;color:#999;padding:16px;">გადადით ბექაფების ჩანართზე</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
+</div>
 
-  <!-- ===== ADMIN PASSWORD CHANGE MODAL ===== -->
-  <div class="modal-backdrop" id="passwordModal" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="passwordModalTitle">
-      <h3 id="passwordModalTitle">პაროლის ცვლილება</h3>
-      <div class="modal-grid">
-        <label for="passwordScope">ცვლილების ტიპი</label>
-        <select id="passwordScope">
-          <option value="admin">მხოლოდ ადმინის პაროლი</option>
-          <option value="all">ყველა მომხმარებლის პაროლი (user)</option>
-        </select>
-        <label for="currentAdminPassword">მიმდინარე ადმინის პაროლი</label>
-        <input type="password" id="currentAdminPassword" autocomplete="current-password">
-        <label for="newPasswordModal">ახალი პაროლი</label>
-        <input type="password" id="newPasswordModal" autocomplete="new-password">
-        <label for="confirmPasswordModal">გაიმეორე ახალი პაროლი</label>
-        <input type="password" id="confirmPasswordModal" autocomplete="new-password">
-      </div>
-      <div class="modal-actions">
-        <button class="btn btn-cancel" id="cancelPasswordChangeBtn" type="button">გაუქმება</button>
-        <button class="btn btn-nav"    id="savePasswordChangeBtn"   type="button">შენახვა</button>
-      </div>
+<!-- ═══════════════════════════════════════════════════════
+     LOADING OVERLAY
+══════════════════════════════════════════════════════════ -->
+<div id="loadingOverlay" class="loading-overlay">
+  <div class="loading-spinner"></div>
+  <p>იტვირთება...</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     MODAL: FIRST LOGIN — SET PERMANENT PASSWORD
+══════════════════════════════════════════════════════════ -->
+<div id="firstLoginModal" class="modal-overlay" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="flTitle">
+  <div class="modal-box">
+    <h3 id="flTitle">პაროლის შეცვლა სავალდებულოა</h3>
+    <p style="color:#666;font-size:13px;margin-bottom:16px;">პირველი შესვლისას დაასეტეთ მუდმივი პაროლი</p>
+    <div class="modal-field">
+      <label>ახალი პაროლი (min 6 სიმბოლო)</label>
+      <input type="password" id="flNewPw" placeholder="ახალი პაროლი">
+    </div>
+    <div class="modal-field">
+      <label>გაიმეორეთ პაროლი</label>
+      <input type="password" id="flConfirmPw" placeholder="გაიმეორეთ">
+    </div>
+    <div class="modal-actions">
+      <button id="flSaveBtn" class="btn btn-primary">პაროლის შენახვა</button>
     </div>
   </div>
+</div>
 
-  <!-- ===== USER CREATE / EDIT MODAL ===== -->
-  <div class="modal-backdrop" id="userModal" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true">
-      <h3 id="userModalTitle">ახალი იუზერი</h3>
-      <div class="modal-grid">
-        <label for="umUsername">მომხმარებლის სახელი</label>
-        <input type="text" id="umUsername" autocomplete="off" spellcheck="false">
-        <label for="umDept">განყოფილება</label>
-        <select id="umDept"></select>
-        <label for="umTempPw" id="umTempPwLabel">ერთჯერადი პაროლი</label>
-        <input type="text" id="umTempPw" autocomplete="off" placeholder="ჩაწერეთ ერთჯერადი პაროლი">
-        <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;">
-          <input type="checkbox" id="umActive" checked style="width:auto;margin:0;"> აქტიური
-        </label>
-      </div>
-      <div class="modal-actions">
-        <button class="btn btn-cancel" id="cancelUserBtn" type="button">გაუქმება</button>
-        <button class="btn btn-nav"    id="saveUserBtn"   type="button">შენახვა</button>
-      </div>
+<!-- ═══════════════════════════════════════════════════════
+     MODAL: ADMIN PASSWORD CHANGE
+══════════════════════════════════════════════════════════ -->
+<div id="passwordModal" class="modal-overlay" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="pwTitle">
+  <div class="modal-box">
+    <h3 id="pwTitle">პაროლის შეცვლა</h3>
+    <div class="modal-field">
+      <label>რომლის პაროლი?</label>
+      <select id="passwordScope">
+        <option value="admin">ადმინი</option>
+        <option value="user">user (ძველი)</option>
+      </select>
+    </div>
+    <div class="modal-field">
+      <label>ადმინის მიმდინარე პაროლი</label>
+      <input type="password" id="currentAdminPassword" placeholder="ადმინის პაროლი">
+    </div>
+    <div class="modal-field">
+      <label>ახალი პაროლი</label>
+      <input type="password" id="newPasswordModal" placeholder="ახალი პაროლი">
+    </div>
+    <div class="modal-field">
+      <label>გაიმეორეთ</label>
+      <input type="password" id="confirmPasswordModal" placeholder="გაიმეორეთ">
+    </div>
+    <div class="modal-actions">
+      <button id="cancelPasswordChangeBtn" class="btn btn-secondary">გაუქმება</button>
+      <button id="savePasswordChangeBtn" class="btn btn-primary">შენახვა</button>
     </div>
   </div>
+</div>
 
-  <!-- ===== TEMP PASSWORD DISPLAY MODAL ===== -->
-  <div class="modal-backdrop" id="tempPwModal" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true">
-      <h3>✅ იუზერი შეიქმნა</h3>
-      <p>შემდეგი ერთჯერადი პაროლი გადაეცით მომხმარებელს. პირველი შესვლისას მოეთხოვება მის შეცვლა:</p>
-      <div class="temp-pw-display">
-        <div class="pw-value" id="tempPwValue">—</div>
-        <p>მომხმარებელი: <strong id="tempPwUsername">—</strong></p>
-      </div>
-      <div class="modal-actions">
-        <button class="btn btn-nav" id="closeTempPwBtn" type="button">დახურვა</button>
-      </div>
+<!-- ═══════════════════════════════════════════════════════
+     MODAL: CREATE / EDIT USER
+══════════════════════════════════════════════════════════ -->
+<div id="userModal" class="modal-overlay" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="userModalTitle">
+  <div class="modal-box">
+    <h3 id="userModalTitle">ახალი იუზერი</h3>
+    <div class="modal-field">
+      <label>მომხმარებლის სახელი</label>
+      <input type="text" id="umUsername" placeholder="username">
+    </div>
+    <div class="modal-field">
+      <label>განყოფილება</label>
+      <select id="umDept"></select>
+    </div>
+    <div class="modal-field">
+      <label id="umTempPwLabel">ერთჯერადი პაროლი</label>
+      <input type="text" id="umTempPw" placeholder="one-time password">
+    </div>
+    <div class="modal-field modal-checkbox">
+      <label><input type="checkbox" id="umActive" checked> აქტიური</label>
+    </div>
+    <div class="modal-actions">
+      <button id="cancelUserBtn" class="btn btn-secondary">გაუქმება</button>
+      <button id="saveUserBtn" class="btn btn-primary">შენახვა</button>
     </div>
   </div>
+</div>
 
-  <!-- ===== RESET PASSWORD MODAL ===== -->
-  <div class="modal-backdrop" id="resetPwModal" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true">
-      <h3>პაროლის განახლება</h3>
-      <p id="resetPwInfo"></p>
-      <div class="modal-grid">
-        <label for="resetPwValue">ახალი ერთჯერადი პაროლი</label>
-        <input type="text" id="resetPwValue" autocomplete="off">
-      </div>
-      <div class="modal-actions">
-        <button class="btn btn-cancel" id="cancelResetPwBtn" type="button">გაუქმება</button>
-        <button class="btn btn-nav"    id="saveResetPwBtn"   type="button">შენახვა</button>
-      </div>
+<!-- ═══════════════════════════════════════════════════════
+     MODAL: SHOW TEMP PASSWORD
+══════════════════════════════════════════════════════════ -->
+<div id="tempPwModal" class="modal-overlay" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal-box">
+    <h3>ერთჯერადი პაროლი</h3>
+    <p><strong id="tempPwUsername"></strong> — დაანახეთ იუზერს:</p>
+    <div class="temp-pw-display" id="tempPwValue"></div>
+    <p style="font-size:12px;color:#888;margin-top:8px;">პირველი შესვლის შემდეგ ეს პაროლი გაუქმდება</p>
+    <div class="modal-actions">
+      <button id="closeTempPwBtn" class="btn btn-primary">გასაგებია</button>
     </div>
   </div>
+</div>
 
-  <!-- App logic -->
-  <script src="app.js"></script>
+<!-- ═══════════════════════════════════════════════════════
+     MODAL: RESET PASSWORD
+══════════════════════════════════════════════════════════ -->
+<div id="resetPwModal" class="modal-overlay" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal-box">
+    <h3>პაროლის გადაყენება</h3>
+    <p id="resetPwInfo" style="color:#666;font-size:13px;"></p>
+    <div class="modal-field">
+      <label>ახალი ერთჯერადი პაროლი</label>
+      <input type="text" id="resetPwValue" placeholder="one-time password">
+    </div>
+    <div class="modal-actions">
+      <button id="cancelResetPwBtn" class="btn btn-secondary">გაუქმება</button>
+      <button id="saveResetPwBtn" class="btn btn-primary">შენახვა</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     MODAL: BACKUP PREVIEW
+══════════════════════════════════════════════════════════ -->
+<div id="backupPreviewModal" class="modal-overlay" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal-box modal-box-wide">
+    <h3>ბექაფის ნახვა</h3>
+    <div id="backupPreviewContent" style="max-height:60vh;overflow-y:auto;"></div>
+    <div class="modal-actions">
+      <button id="closeBackupPreviewBtn" class="btn btn-primary">დახურვა</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     FIREBASE
+══════════════════════════════════════════════════════════ -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-analytics-compat.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

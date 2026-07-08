@@ -1,25 +1,25 @@
 // ============================================================
-// INPATIENTS TURNOVER — APPLICATION LOGIC
+// INPATIENTS TURNOVER — APPLICATION LOGIC  v3.0
 // ============================================================
 
 // ==========================================================
-// FIREBASE CONFIGURATION
+// FIREBASE
 // ==========================================================
 const firebaseConfig = {
-  apiKey: "AIzaSyDJv8Jn4eJhpj2k1STTtzv6RAnU4pa1crg",
-  authDomain: "inpatients-turnover.firebaseapp.com",
-  projectId: "inpatients-turnover",
-  storageBucket: "inpatients-turnover.firebasestorage.app",
+  apiKey:            "AIzaSyDJv8Jn4eJhpj2k1STTtzv6RAnU4pa1crg",
+  authDomain:        "inpatients-turnover.firebaseapp.com",
+  projectId:         "inpatients-turnover",
+  storageBucket:     "inpatients-turnover.firebasestorage.app",
   messagingSenderId: "1064730454016",
-  appId: "1:1064730454016:web:dc3d23a938b100e3c150e5",
-  measurementId: "G-52MZWTGQ69"
+  appId:             "1:1064730454016:web:dc3d23a938b100e3c150e5",
+  measurementId:     "G-52MZWTGQ69"
 };
 
 let db = null;
 let fbInited = false;
 
 function setFbStatus(ok, text) {
-  ['fbDot','fbText','fbDot2','fbText2'].forEach(id => {
+  ['fbDot','fbText','fbDot2','fbText2','fbDotT','fbTextT'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     if (id.includes('Dot')) { el.classList.remove('ok','bad'); el.classList.add(ok ? 'ok' : 'bad'); }
@@ -35,11 +35,11 @@ function setSaveIndicator(text) {
 function initFirebase() {
   try {
     if (!fbInited) { firebase.initializeApp(firebaseConfig); fbInited = true; }
-    try { if (firebase.analytics) firebase.analytics(); } catch(e) { console.warn('Analytics:', e); }
+    try { if (firebase.analytics) firebase.analytics(); } catch(e) {}
     db = firebase.firestore();
     setFbStatus(false, "Firebase: შემოწმება...");
     db.collection('_meta').doc('ping').get()
-      .then(() => setFbStatus(true, "Firebase: დაკავშირებულია ✓"))
+      .then(() => setFbStatus(true,  "Firebase: დაკავშირებულია ✓"))
       .catch(() => setFbStatus(false, "Firebase: ვერ დაუკავშირდა ✗"));
   } catch(e) {
     console.error("Firebase init error:", e);
@@ -48,14 +48,13 @@ function initFirebase() {
 }
 
 // ==========================================================
-// SHA-256 UTILITY (Web Crypto API)
+// SHA-256
 // ==========================================================
 async function sha256(str) {
   try {
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
   } catch(e) {
-    console.warn('SHA-256 fallback:', e);
     let hash = 0;
     for (let i = 0; i < str.length; i++) { hash = ((hash << 5) - hash) + str.charCodeAt(i); hash |= 0; }
     return 'fb_' + Math.abs(hash).toString(16).padStart(8,'0');
@@ -63,13 +62,13 @@ async function sha256(str) {
 }
 
 // ==========================================================
-// STATE VARIABLES
+// STATE
 // ==========================================================
 let selectedDate = new Date();
 let currentYear  = selectedDate.getFullYear();
 let isAdmin  = false;
 let isLocked = false;
-let currentUser = null; // { id, username, role, allowedDepartments, mustChangePassword, active }
+let currentUser = null;
 
 const AUTH_STORE_KEY = 'inpatientsAuth_v1';
 const SESSION_KEY    = 'inpatients_session_v2';
@@ -89,11 +88,14 @@ const ADMISSION_DEPTS_ONLY = new Set(["ზრდასრულთა ემე�
 const deptOrder = [...BASE_DEPTS];
 
 let dataByDept = new Map();
-let isCurrentlyEditing = false;
-let currentEditingCell = null;
-let unsubscribeDay = null;
-let saveChain  = Promise.resolve();
-let saveTimeout = null;
+let isCurrentlyEditing  = false;
+let currentEditingCell  = null;
+let unsubscribeDay      = null;
+let saveChain           = Promise.resolve();
+let saveTimeout         = null;
+
+// ► RACE CONDITION FIX: block live-listener from overwriting unsaved local data
+let unsavedLocalChanges = false;
 
 const extraFieldState = {
   responsiblePerson: { dirty: false, lastRemoteValue: '' },
@@ -105,7 +107,7 @@ let editingUserId = null;
 let resetPwUserId = null;
 
 // ==========================================================
-// PERMISSION HELPERS
+// PERMISSIONS
 // ==========================================================
 function canWriteDept(dept) {
   if (!currentUser) return false;
@@ -113,10 +115,17 @@ function canWriteDept(dept) {
   return Array.isArray(currentUser.allowedDepartments) && currentUser.allowedDepartments.includes(dept);
 }
 
-function canWriteNow() { return isAdmin || !isLocked; }
+// ► IMPORTANT: dept users can ALWAYS write their own dept, regardless of isLocked
+//   isLocked only blocks the UI for non-admins, but we let each user save their own
+function canWriteNow(dept) {
+  if (isAdmin) return true;
+  if (isLocked) return false;           // locked day: nobody writes
+  if (dept) return canWriteDept(dept);  // dept check if provided
+  return true;
+}
 
 function canEditCell(field, dept) {
-  if (!canWriteNow()) return false;
+  if (!canWriteNow(dept)) return false;
   if (field === 'initial' && !isAdmin) return false;
   if (!isAdmin && !canWriteDept(dept)) return false;
   return true;
@@ -130,7 +139,7 @@ function showOverlay(on) {
   if (el) el.classList.toggle('show', !!on);
 }
 
-function showToast(msg, duration = 2500) {
+function showToast(msg, duration = 2800) {
   const t = document.createElement('div');
   t.textContent = msg;
   t.style.cssText = 'position:fixed;top:20px;right:20px;background:#333;color:white;padding:15px 25px;border-radius:5px;z-index:9999;max-width:320px;word-break:break-word;font-family:inherit;';
@@ -147,6 +156,10 @@ function setView(view) {
 
 function formatDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getFullYear()).slice(-2)}`;
+}
+
+function formatDateFull(d) {
+  return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
 }
 
 function getDocId(date) { return formatDate(date).replace(/\./g,'-'); }
@@ -184,28 +197,28 @@ function hasDirtyExtraFields() {
 
 function syncExtraFieldAfterSave(id, savedValue) {
   const el = document.getElementById(id);
-  const state = extraFieldState[id];
-  if (!el || !state) return;
-  const normalized = savedValue || '';
-  state.lastRemoteValue = normalized;
-  if ((el.value || '') === normalized) state.dirty = false;
+  const st = extraFieldState[id];
+  if (!el || !st) return;
+  const n = savedValue || '';
+  st.lastRemoteValue = n;
+  if ((el.value || '') === n) st.dirty = false;
 }
 
 function computeFinal(v) {
-  return (+v.initial||0)+(+v.admission||0)-(+v.discharge||0)-(+v.transfer||0)-(+v.mortality||0);
+  return (+v.initial||0) + (+v.admission||0) - (+v.discharge||0) - (+v.transfer||0) - (+v.mortality||0);
 }
 
 function formatTs(ts) {
   if (!ts) return '—';
   let d;
-  if (ts.toDate) d = ts.toDate();
+  if (ts.toDate)          d = ts.toDate();
   else if (typeof ts === 'string') d = new Date(ts);
-  else d = new Date(ts);
-  return isNaN(d) ? '—' : d.toLocaleDateString('ka-GE', { year:'numeric', month:'2-digit', day:'2-digit' });
+  else                    d = new Date(ts);
+  return isNaN(d) ? '—' : d.toLocaleDateString('ka-GE',{ year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
 }
 
 // ==========================================================
-// AUTH PASSWORDS (admin — plaintext, backward compat)
+// AUTH — admin plaintext (backward compat)
 // ==========================================================
 function getAuthPasswords() {
   try {
@@ -218,7 +231,7 @@ function getAuthPasswords() {
 }
 
 function saveAuthPasswords(auth) {
-  try { localStorage.setItem(AUTH_STORE_KEY, JSON.stringify(auth)); } catch(e) { console.warn('localStorage error:', e); }
+  try { localStorage.setItem(AUTH_STORE_KEY, JSON.stringify(auth)); } catch(e) {}
 }
 
 async function loadAuthPasswords(forceRemote = false) {
@@ -239,53 +252,42 @@ async function loadAuthPasswords(forceRemote = false) {
 }
 
 async function persistAuthPasswords(auth) {
-  const next = {
-    admin: String(auth.admin || DEFAULT_AUTH.admin),
-    user:  String(auth.user  || DEFAULT_AUTH.user)
-  };
+  const next = { admin: String(auth.admin||DEFAULT_AUTH.admin), user: String(auth.user||DEFAULT_AUTH.user) };
   authCache = next; saveAuthPasswords(next);
   if (!db) return;
-  try { await db.collection('settings').doc('auth').set(next, { merge: true }); }
-  catch(e) { console.error('Auth save error:', e); }
+  try { await db.collection('settings').doc('auth').set(next,{merge:true}); }
+  catch(e) { console.error('Auth save error:',e); }
 }
 
 // ==========================================================
-// SESSION PERSISTENCE
+// SESSION
 // ==========================================================
 function saveSession(user) {
-  try { localStorage.setItem(SESSION_KEY, JSON.stringify({ ...user, savedAt: Date.now() })); }
-  catch(e) { console.warn('Session save error:', e); }
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify({...user, savedAt: Date.now()})); } catch(e) {}
 }
-
-function clearSession() {
-  try { localStorage.removeItem(SESSION_KEY); } catch(e) {}
-}
+function clearSession() { try { localStorage.removeItem(SESSION_KEY); } catch(e) {} }
 
 // ==========================================================
-// USER MANAGEMENT — FIRESTORE CRUD
+// USER MANAGEMENT — Firestore CRUD
 // ==========================================================
 async function loadUsers() {
   if (!db) return [];
   try {
     const snap = await db.collection('users').get();
-    usersCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    usersCache = snap.docs.map(d => ({id:d.id,...d.data()}));
     return usersCache;
-  } catch(e) { console.error('Load users error:', e); return []; }
+  } catch(e) { console.error('Load users:',e); return []; }
 }
 
 async function saveUserToFirestore(userObj) {
   if (!db) throw new Error('Firebase not connected');
   const now = firebase.firestore.FieldValue.serverTimestamp();
   if (userObj.id) {
-    const { id, ...data } = userObj;
-    data.updatedAt = now;
-    await db.collection('users').doc(id).set(data, { merge: true });
-    return id;
+    const {id,...data} = userObj; data.updatedAt = now;
+    await db.collection('users').doc(id).set(data,{merge:true}); return id;
   } else {
-    const { id: _id, ...data } = userObj;
-    data.createdAt = now; data.updatedAt = now;
-    const ref = await db.collection('users').add(data);
-    return ref.id;
+    const {id:_id,...data} = userObj; data.createdAt = now; data.updatedAt = now;
+    const ref = await db.collection('users').add(data); return ref.id;
   }
 }
 
@@ -299,12 +301,12 @@ async function findUserByUsername(username) {
   try {
     const snap = await db.collection('users').where('username','==',username).limit(1).get();
     if (snap.empty) return null;
-    return { id: snap.docs[0].id, ...snap.docs[0].data() };
-  } catch(e) { console.error('Find user error:', e); return null; }
+    return {id:snap.docs[0].id,...snap.docs[0].data()};
+  } catch(e) { console.error('Find user:',e); return null; }
 }
 
 // ==========================================================
-// AUTHENTICATION
+// LOGIN
 // ==========================================================
 async function checkPassword() {
   const username = (document.getElementById('username').value || '').trim();
@@ -314,58 +316,39 @@ async function checkPassword() {
   if (!password) { showToast('პაროლი სავალდებულოა'); return; }
 
   const btn = document.getElementById('loginBtn');
-  btn.disabled = true;
-  btn.innerHTML = 'შემოწმება...';
+  btn.disabled = true; btn.innerHTML = 'შემოწმება...';
 
   try {
-    // --- ADMIN ---
+    // ── ADMIN ──────────────────────────────────────────
     if (username.toLowerCase() === 'admin') {
       const auth = await loadAuthPasswords(true);
       if (password === auth.admin) {
-        currentUser = { id:'admin', username:'admin', role:'admin', allowedDepartments:[...BASE_DEPTS], mustChangePassword:false, active:true };
-        isAdmin = true;
-        saveSession(currentUser);
-        afterLogin();
-        return;
+        currentUser = {id:'admin',username:'admin',role:'admin',allowedDepartments:[...BASE_DEPTS],mustChangePassword:false,active:true};
+        isAdmin = true; saveSession(currentUser); afterLogin(); return;
       }
-      showToast('არასწორი პაროლი');
-      return;
+      showToast('არასწორი პაროლი'); return;
     }
 
-    // --- DEPARTMENT USER ---
+    // ── DEPARTMENT USER ────────────────────────────────
     const user = await findUserByUsername(username);
-    if (!user) { showToast('მომხმარებელი ვერ მოიძებნა'); return; }
+    if (!user)        { showToast('მომხმარებელი ვერ მოიძებნა'); return; }
     if (!user.active) { showToast('ეს ანგარიში დეაქტივირებულია'); return; }
 
-    const passwordHash = await sha256(password);
+    const hash = await sha256(password);
 
-    // Temp (one-time) password
-    if (user.passwordType === 'temporary' && user.tempPasswordHash && user.tempPasswordHash === passwordHash) {
-      currentUser = { ...user };
-      isAdmin = false;
-      openFirstLoginModal();
-      return;
+    // one-time password
+    if (user.tempPasswordHash && user.tempPasswordHash === hash) {
+      currentUser = {...user}; isAdmin = false; openFirstLoginModal(); return;
     }
-
-    // Permanent password
-    if (user.passwordHash && user.passwordHash === passwordHash) {
-      if (user.mustChangePassword) {
-        currentUser = { ...user };
-        isAdmin = false;
-        openFirstLoginModal();
-        return;
-      }
-      currentUser = { ...user };
-      isAdmin = false;
-      saveSession(currentUser);
-      afterLogin();
-      return;
+    // permanent password
+    if (user.passwordHash && user.passwordHash === hash) {
+      if (user.mustChangePassword) { currentUser = {...user}; isAdmin = false; openFirstLoginModal(); return; }
+      currentUser = {...user}; isAdmin = false; saveSession(currentUser); afterLogin(); return;
     }
 
     showToast('არასწორი პაროლი');
   } catch(e) {
-    console.error('Login error:', e);
-    showToast('შესვლა ვერ მოხერხდა. სცადეთ ხელახლა.');
+    console.error('Login error:',e); showToast('შესვლა ვერ მოხერხდა. სცადეთ ხელახლა.');
   } finally {
     btn.disabled = false;
     btn.innerHTML = 'შესვლა <span class="auth-login-arrow">→</span>';
@@ -373,18 +356,14 @@ async function checkPassword() {
 }
 
 function afterLogin() {
-  updateDeptUserInfo();
-  setView('calendar');
-  currentYear = selectedDate.getFullYear();
-  renderCalendar(currentYear);
-  showToast(isAdmin ? 'ადმინი ✓' : `შესვლა ✓ — ${currentUser.allowedDepartments?.join(', ')}`);
+  updateDeptUserInfo(); setView('calendar');
+  currentYear = selectedDate.getFullYear(); renderCalendar(currentYear);
+  showToast(isAdmin ? 'ადმინი ✓' : `შესვლა ✓ — ${(currentUser.allowedDepartments||[]).join(', ')}`);
 }
 
 function logout() {
-  clearSession();
-  currentUser = null; isAdmin = false; isLocked = false;
-  dataByDept = new Map();
-  detachLiveListener();
+  clearSession(); currentUser = null; isAdmin = false; isLocked = false;
+  unsavedLocalChanges = false; dataByDept = new Map(); detachLiveListener();
   document.getElementById('username').value = '';
   document.getElementById('password').value = '';
   setView('auth');
@@ -399,88 +378,61 @@ function updateDeptUserInfo() {
 }
 
 // ==========================================================
-// FIRST-LOGIN PASSWORD CHANGE
+// FIRST-LOGIN MODAL
 // ==========================================================
 function openFirstLoginModal() {
-  document.getElementById('flNewPw').value = '';
-  document.getElementById('flConfirmPw').value = '';
-  const m = document.getElementById('firstLoginModal');
-  m.classList.add('show'); m.setAttribute('aria-hidden','false');
+  document.getElementById('flNewPw').value = ''; document.getElementById('flConfirmPw').value = '';
+  const m = document.getElementById('firstLoginModal'); m.classList.add('show'); m.setAttribute('aria-hidden','false');
   document.getElementById('flNewPw').focus();
 }
-
 function closeFirstLoginModal() {
-  const m = document.getElementById('firstLoginModal');
-  m.classList.remove('show'); m.setAttribute('aria-hidden','true');
+  const m = document.getElementById('firstLoginModal'); m.classList.remove('show'); m.setAttribute('aria-hidden','true');
 }
-
 async function handleFirstLoginSave() {
-  const newPw     = document.getElementById('flNewPw').value;
-  const confirmPw = document.getElementById('flConfirmPw').value;
-
+  const newPw = document.getElementById('flNewPw').value;
+  const conf  = document.getElementById('flConfirmPw').value;
   if (!newPw || newPw.length < 6) { showToast('პაროლი უნდა იყოს მინიმუმ 6 სიმბოლო'); return; }
-  if (newPw !== confirmPw) { showToast('პაროლები არ ემთხვევა'); return; }
-
-  const btn = document.getElementById('flSaveBtn');
-  btn.disabled = true; btn.textContent = 'ინახება...';
+  if (newPw !== conf) { showToast('პაროლები არ ემთხვევა'); return; }
+  const btn = document.getElementById('flSaveBtn'); btn.disabled = true; btn.textContent = 'ინახება...';
   try {
     const hash = await sha256(newPw);
     await db.collection('users').doc(currentUser.id).update({
-      passwordHash:     hash,
-      tempPasswordHash: firebase.firestore.FieldValue.delete(),
-      passwordType:     'permanent',
-      mustChangePassword: false,
+      passwordHash: hash, tempPasswordHash: firebase.firestore.FieldValue.delete(),
+      passwordType: 'permanent', mustChangePassword: false,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
-    currentUser.passwordHash      = hash;
-    currentUser.tempPasswordHash  = null;
-    currentUser.passwordType      = 'permanent';
-    currentUser.mustChangePassword = false;
-    closeFirstLoginModal();
-    saveSession(currentUser);
-    afterLogin();
+    currentUser.passwordHash = hash; currentUser.tempPasswordHash = null;
+    currentUser.passwordType = 'permanent'; currentUser.mustChangePassword = false;
+    closeFirstLoginModal(); saveSession(currentUser); afterLogin();
     showToast('პაროლი წარმატებით დაყენდა ✓');
-  } catch(e) {
-    console.error('First login save error:', e);
-    showToast('პაროლის შენახვა ვერ მოხერხდა');
-  } finally {
-    btn.disabled = false; btn.textContent = 'პაროლის შენახვა';
-  }
+  } catch(e) { console.error(e); showToast('პაროლის შენახვა ვერ მოხერხდა'); }
+  finally { btn.disabled = false; btn.textContent = 'პაროლის შენახვა'; }
 }
 
 // ==========================================================
-// ADMIN PASSWORD CHANGE MODAL
+// ADMIN PASSWORD CHANGE
 // ==========================================================
 function openPasswordChangeModal() {
-  const m = document.getElementById('passwordModal');
-  if (!m) return;
+  const m = document.getElementById('passwordModal'); if (!m) return;
   m.classList.add('show'); m.setAttribute('aria-hidden','false');
   document.getElementById('passwordScope').value = 'admin';
-  ['currentAdminPassword','newPasswordModal','confirmPasswordModal'].forEach(id => {
-    document.getElementById(id).value = '';
-  });
+  ['currentAdminPassword','newPasswordModal','confirmPasswordModal'].forEach(id => { document.getElementById(id).value = ''; });
   document.getElementById('currentAdminPassword').focus();
 }
-
 function closePasswordChangeModal() {
-  const m = document.getElementById('passwordModal');
-  if (!m) return;
+  const m = document.getElementById('passwordModal'); if (!m) return;
   m.classList.remove('show'); m.setAttribute('aria-hidden','true');
 }
-
 async function changePasswordByAdminChoice() {
   if (!isAdmin) return;
   const scope = document.getElementById('passwordScope').value;
   const auth  = await loadAuthPasswords(true);
-  if (document.getElementById('currentAdminPassword').value !== auth.admin) {
-    showToast('ადმინის მიმდინარე პაროლი არასწორია'); return;
-  }
+  if (document.getElementById('currentAdminPassword').value !== auth.admin) { showToast('ადმინის მიმდინარე პაროლი არასწორია'); return; }
   const newPass = document.getElementById('newPasswordModal').value;
-  if (!newPass || newPass.length < 4) { showToast('ახალი პაროლი უნდა იყოს მინიმუმ 4 სიმბოლო'); return; }
+  if (!newPass || newPass.length < 4) { showToast('ახალი პაროლი მინიმუმ 4 სიმბოლო'); return; }
   if (newPass !== document.getElementById('confirmPasswordModal').value) { showToast('პაროლები არ ემთხვევა'); return; }
   if (scope === 'admin') auth.admin = newPass; else auth.user = newPass;
-  await persistAuthPasswords(auth);
-  closePasswordChangeModal();
+  await persistAuthPasswords(auth); closePasswordChangeModal();
   showToast(scope === 'admin' ? 'ადმინის პაროლი შეიცვალა ✓' : 'user პაროლი შეიცვალა ✓');
 }
 
@@ -492,7 +444,7 @@ async function renderUserManagement() {
   tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#999;padding:16px;">იტვირთება...</td></tr>';
   await loadUsers();
   if (!usersCache.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#999;padding:16px;">იუზერები ვერ მოიძებნა. შექმენით ახალი.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#999;padding:16px;">იუზერები ვერ მოიძებნა.</td></tr>';
     return;
   }
   tbody.innerHTML = '';
@@ -500,16 +452,16 @@ async function renderUserManagement() {
     const depts = Array.isArray(u.allowedDepartments) ? u.allowedDepartments.join(', ') : '—';
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${u.username || '—'}</strong></td>
+      <td><strong>${u.username||'—'}</strong></td>
       <td style="font-size:12px;">${depts}</td>
-      <td><span class="badge ${u.active ? 'badge-active' : 'badge-inactive'}">${u.active ? 'აქტიური' : 'არააქტიური'}</span></td>
-      <td><span class="badge ${u.passwordType === 'temporary' ? 'badge-temp' : 'badge-perm'}">${u.passwordType === 'temporary' ? 'ერთჯერადი' : 'მუდმივი'}</span></td>
+      <td><span class="badge ${u.active?'badge-active':'badge-inactive'}">${u.active?'აქტიური':'არააქტიური'}</span></td>
+      <td><span class="badge ${u.passwordType==='temporary'?'badge-temp':'badge-perm'}">${u.passwordType==='temporary'?'ერთჯერადი':'მუდმივი'}</span></td>
       <td style="font-size:12px;">${formatTs(u.createdAt)}</td>
       <td style="font-size:12px;">${formatTs(u.updatedAt)}</td>
       <td>
         <button class="btn-sm btn-sm-edit"   onclick="openUserModal('${u.id}')">რედ.</button>
         <button class="btn-sm btn-sm-pass"   onclick="openResetPwModal('${u.id}')">პაროლი</button>
-        <button class="btn-sm btn-sm-toggle" onclick="toggleUserActive('${u.id}',${!u.active})">${u.active ? 'დეაქტ.' : 'აქტივ.'}</button>
+        <button class="btn-sm btn-sm-toggle" onclick="toggleUserActive('${u.id}',${!u.active})">${u.active?'დეაქტ.':'აქტივ.'}</button>
         <button class="btn-sm btn-sm-del"    onclick="confirmDeleteUser('${u.id}')">წაშლა</button>
       </td>`;
     tbody.appendChild(tr);
@@ -519,20 +471,12 @@ async function renderUserManagement() {
 function openUserModal(userId = null) {
   editingUserId = userId;
   const umDept = document.getElementById('umDept');
-
-  // Populate department select
   umDept.innerHTML = '';
-  BASE_DEPTS.forEach(d => {
-    const opt = document.createElement('option');
-    opt.value = d; opt.textContent = d;
-    umDept.appendChild(opt);
-  });
-
+  BASE_DEPTS.forEach(d => { const o = document.createElement('option'); o.value=d; o.textContent=d; umDept.appendChild(o); });
   if (userId) {
-    const u = usersCache.find(x => x.id === userId);
-    if (!u) return;
+    const u = usersCache.find(x => x.id === userId); if (!u) return;
     document.getElementById('userModalTitle').textContent = 'იუზერის რედაქტირება';
-    document.getElementById('umUsername').value = u.username || '';
+    document.getElementById('umUsername').value = u.username||'';
     const dept = Array.isArray(u.allowedDepartments) ? u.allowedDepartments[0] : '';
     if (dept) umDept.value = dept;
     document.getElementById('umTempPw').value = '';
@@ -545,165 +489,266 @@ function openUserModal(userId = null) {
     document.getElementById('umTempPwLabel').textContent = 'ერთჯერადი პაროლი';
     document.getElementById('umActive').checked = true;
   }
-
-  const m = document.getElementById('userModal');
-  m.classList.add('show'); m.setAttribute('aria-hidden','false');
+  const m = document.getElementById('userModal'); m.classList.add('show'); m.setAttribute('aria-hidden','false');
   document.getElementById('umUsername').focus();
 }
-
 function closeUserModal() {
-  const m = document.getElementById('userModal');
-  m.classList.remove('show'); m.setAttribute('aria-hidden','true');
+  const m = document.getElementById('userModal'); m.classList.remove('show'); m.setAttribute('aria-hidden','true');
   editingUserId = null;
 }
-
 async function saveUserFromModal() {
-  const username = (document.getElementById('umUsername').value || '').trim();
+  const username = (document.getElementById('umUsername').value||'').trim();
   const dept     = document.getElementById('umDept').value;
-  const tempPw   = (document.getElementById('umTempPw').value || '').trim();
+  const tempPw   = (document.getElementById('umTempPw').value||'').trim();
   const active   = document.getElementById('umActive').checked;
-
-  if (!username) { showToast('მომხმარებლის სახელი სავალდებულოა'); return; }
+  if (!username) { showToast('სახელი სავალდებულოა'); return; }
   if (username.toLowerCase() === 'admin') { showToast('"admin" სახელი დაკავებულია'); return; }
   if (!dept) { showToast('განყოფილება სავალდებულოა'); return; }
-
-  const btn = document.getElementById('saveUserBtn');
-  btn.disabled = true; btn.textContent = 'ინახება...';
+  const btn = document.getElementById('saveUserBtn'); btn.disabled=true; btn.textContent='ინახება...';
   try {
     let userObj = {};
     if (editingUserId) {
-      const existing = usersCache.find(x => x.id === editingUserId);
-      userObj = { id: editingUserId, ...existing, username, allowedDepartments: [dept], active };
+      const existing = usersCache.find(x=>x.id===editingUserId);
+      userObj = {id:editingUserId,...existing, username, allowedDepartments:[dept], active};
       if (tempPw) {
-        const dup = usersCache.find(x => x.username === username && x.id !== editingUserId);
+        const dup = usersCache.find(x=>x.username===username&&x.id!==editingUserId);
         if (dup) { showToast(`სახელი "${username}" უკვე გამოყენებულია`); return; }
         userObj.tempPasswordHash = await sha256(tempPw);
-        userObj.passwordType     = 'temporary';
-        userObj.mustChangePassword = true;
+        userObj.passwordType = 'temporary'; userObj.mustChangePassword = true;
       }
     } else {
       if (!tempPw) { showToast('ერთჯერადი პაროლი სავალდებულოა'); return; }
-      const dup = usersCache.find(x => x.username === username);
+      const dup = usersCache.find(x=>x.username===username);
       if (dup) { showToast(`სახელი "${username}" უკვე გამოყენებულია`); return; }
-      userObj = {
-        username, role: 'department_user', allowedDepartments: [dept],
-        tempPasswordHash: await sha256(tempPw), passwordHash: null,
-        passwordType: 'temporary', mustChangePassword: true, active
-      };
+      userObj = { username, role:'department_user', allowedDepartments:[dept],
+        tempPasswordHash: await sha256(tempPw), passwordHash:null,
+        passwordType:'temporary', mustChangePassword:true, active };
     }
-
     await saveUserToFirestore(userObj);
-    closeUserModal();
-    await renderUserManagement();
+    closeUserModal(); await renderUserManagement();
     showToast(editingUserId ? 'იუზერი განახლდა ✓' : 'იუზერი შეიქმნა ✓');
-
-    if (!editingUserId && tempPw) {
-      document.getElementById('tempPwValue').textContent   = tempPw;
-      document.getElementById('tempPwUsername').textContent = username;
-      const tm = document.getElementById('tempPwModal');
-      tm.classList.add('show'); tm.setAttribute('aria-hidden','false');
-    }
-  } catch(e) {
-    console.error('Save user error:', e);
-    showToast('შენახვა ვერ მოხერხდა: ' + e.message);
-  } finally {
-    btn.disabled = false; btn.textContent = 'შენახვა';
-  }
+    if (!editingUserId && tempPw) showTempPassword(username, tempPw);
+  } catch(e) { console.error(e); showToast('შენახვა ვერ მოხერხდა: '+e.message); }
+  finally { btn.disabled=false; btn.textContent='შენახვა'; }
 }
-
 async function toggleUserActive(userId, newActive) {
   try {
-    await db.collection('users').doc(userId).update({
-      active: newActive,
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    await renderUserManagement();
-    showToast(newActive ? 'იუზერი გააქტიურდა ✓' : 'იუზერი დეაქტივირდა');
-  } catch(e) { console.error('Toggle error:', e); showToast('მოქმედება ვერ შესრულდა'); }
+    await db.collection('users').doc(userId).update({ active:newActive, updatedAt:firebase.firestore.FieldValue.serverTimestamp() });
+    await renderUserManagement(); showToast(newActive?'გააქტიურდა ✓':'დეაქტივირდა');
+  } catch(e) { showToast('მოქმედება ვერ შესრულდა'); }
 }
-
 async function confirmDeleteUser(userId) {
-  const u = usersCache.find(x => x.id === userId);
-  if (!u || !confirm(`წაიშალოს იუზერი "${u.username}"?`)) return;
-  try {
-    await deleteUserFromFirestore(userId);
-    await renderUserManagement();
-    showToast('იუზერი წაიშალა');
-  } catch(e) { console.error('Delete error:', e); showToast('წაშლა ვერ მოხერხდა'); }
+  const u = usersCache.find(x=>x.id===userId);
+  if (!u || !confirm(`წაიშალოს "${u.username}"?`)) return;
+  try { await deleteUserFromFirestore(userId); await renderUserManagement(); showToast('წაიშალა'); }
+  catch(e) { showToast('წაშლა ვერ მოხერხდა'); }
 }
-
 function openResetPwModal(userId) {
-  const u = usersCache.find(x => x.id === userId);
-  if (!u) return;
+  const u = usersCache.find(x=>x.id===userId); if (!u) return;
   resetPwUserId = userId;
-  document.getElementById('resetPwInfo').textContent = `მომხმარებელი: "${u.username}" — ახალი ერთჯერადი პაროლი:`;
+  document.getElementById('resetPwInfo').textContent = `"${u.username}" — ახალი ერთჯერადი პაროლი:`;
   document.getElementById('resetPwValue').value = '';
-  const m = document.getElementById('resetPwModal');
-  m.classList.add('show'); m.setAttribute('aria-hidden','false');
+  const m = document.getElementById('resetPwModal'); m.classList.add('show'); m.setAttribute('aria-hidden','false');
   document.getElementById('resetPwValue').focus();
 }
-
 function closeResetPwModal() {
-  const m = document.getElementById('resetPwModal');
-  m.classList.remove('show'); m.setAttribute('aria-hidden','true');
+  const m = document.getElementById('resetPwModal'); m.classList.remove('show'); m.setAttribute('aria-hidden','true');
   resetPwUserId = null;
 }
-
 async function saveResetPassword() {
   if (!resetPwUserId) return;
-  const newPw = (document.getElementById('resetPwValue').value || '').trim();
-  if (!newPw || newPw.length < 4) { showToast('პაროლი უნდა იყოს მინიმუმ 4 სიმბოლო'); return; }
-  const btn = document.getElementById('saveResetPwBtn');
-  btn.disabled = true; btn.textContent = 'ინახება...';
+  const newPw = (document.getElementById('resetPwValue').value||'').trim();
+  if (!newPw || newPw.length < 4) { showToast('მინიმუმ 4 სიმბოლო'); return; }
+  const btn = document.getElementById('saveResetPwBtn'); btn.disabled=true; btn.textContent='ინახება...';
   try {
     const hash = await sha256(newPw);
     await db.collection('users').doc(resetPwUserId).update({
-      tempPasswordHash: hash, passwordType: 'temporary', mustChangePassword: true,
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      tempPasswordHash:hash, passwordType:'temporary', mustChangePassword:true,
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp()
     });
-    const u = usersCache.find(x => x.id === resetPwUserId);
-    closeResetPwModal();
-    await renderUserManagement();
-    showToast('ახალი ერთჯერადი პაროლი დაყენდა ✓');
-    if (u) {
-      document.getElementById('tempPwValue').textContent   = newPw;
-      document.getElementById('tempPwUsername').textContent = u.username;
-      const tm = document.getElementById('tempPwModal');
-      tm.classList.add('show'); tm.setAttribute('aria-hidden','false');
-    }
-  } catch(e) { console.error('Reset pw error:', e); showToast('პაროლის შეცვლა ვერ მოხერხდა'); }
-  finally { btn.disabled = false; btn.textContent = 'შენახვა'; }
+    const u = usersCache.find(x=>x.id===resetPwUserId);
+    closeResetPwModal(); await renderUserManagement(); showToast('ახალი პაროლი დაყენდა ✓');
+    if (u) showTempPassword(u.username, newPw);
+  } catch(e) { showToast('პაროლის შეცვლა ვერ მოხერხდა'); }
+  finally { btn.disabled=false; btn.textContent='შენახვა'; }
+}
+function showTempPassword(username, pw) {
+  document.getElementById('tempPwValue').textContent    = pw;
+  document.getElementById('tempPwUsername').textContent = username;
+  const m = document.getElementById('tempPwModal'); m.classList.add('show'); m.setAttribute('aria-hidden','false');
 }
 
 // ==========================================================
-// ADMIN PANEL LOCK/UNLOCK
+// ██████████████  BACKUP SYSTEM  ██████████████
+// ==========================================================
+async function createBackupNow(label) {
+  if (!db) return;
+  const docId = getDocId(selectedDate);
+  try {
+    const snap = await db.collection('dailyData').doc(docId).get();
+    if (!snap.exists) { showToast('ბექაფის გასაკეთებლად მონაცემი ჯერ არ არის'); return; }
+    const bId = `${docId}_${Date.now()}`;
+    await db.collection('backups').doc(bId).set({
+      ...snap.data(),
+      _docId:    docId,
+      _date:     formatDateFull(selectedDate),
+      _label:    label || `ბექაფი — ${formatDateFull(selectedDate)}`,
+      _backedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    console.log('✅ Backup created:', bId);
+    return bId;
+  } catch(e) { console.error('Backup error:', e); }
+}
+
+// Auto-backup: silently, once after every successful save
+async function autoBackup(docId, data) {
+  if (!db || !isAdmin) return; // Only auto-backup when admin is in session
+  try {
+    const bId = `${docId}_auto_${Date.now()}`;
+    await db.collection('backups').doc(bId).set({
+      ...data,
+      _docId:    docId,
+      _date:     docId.replace(/-/g,'.'),
+      _label:    `auto — ${docId}`,
+      _backedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  } catch(e) { console.warn('Auto-backup failed (non-critical):', e); }
+}
+
+async function renderBackups() {
+  if (!db || !isAdmin) return;
+  const tbody = document.getElementById('backupTableBody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#999;padding:12px;">იტვირთება...</td></tr>';
+  try {
+    const snap = await db.collection('backups').orderBy('_backedAt','desc').limit(200).get();
+    if (snap.empty) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#999;padding:12px;">ბექაფები ვერ მოიძებნა</td></tr>';
+      return;
+    }
+    tbody.innerHTML = '';
+    snap.docs.forEach(d => {
+      const b  = d.data();
+      const tr = document.createElement('tr');
+      const rowCount = Array.isArray(b.rows) ? b.rows.filter(r => r.admission||r.discharge||r.mortality||r.transfer).length : 0;
+      tr.innerHTML = `
+        <td style="font-size:12px;">${formatTs(b._backedAt)}</td>
+        <td><strong>${b._date||d.id}</strong></td>
+        <td style="font-size:11px;color:#666;">${b._label||'—'} &nbsp;(${rowCount} განყ.)</td>
+        <td>
+          <button class="btn-sm btn-sm-edit" onclick="previewBackup('${d.id}')">ნახვა</button>
+          <button class="btn-sm btn-sm-pass" onclick="restoreBackup('${d.id}')">აღდგენა</button>
+          <button class="btn-sm btn-sm-del"  onclick="deleteBackup('${d.id}')">წაშლა</button>
+        </td>`;
+      tbody.appendChild(tr);
+    });
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="4" style="color:red;padding:12px;">შეცდომა: '+e.message+'</td></tr>';
+  }
+}
+
+async function previewBackup(backupId) {
+  if (!db) return;
+  try {
+    const snap = await db.collection('backups').doc(backupId).get();
+    if (!snap.exists) { showToast('ბექაფი ვერ მოიძებნა'); return; }
+    const b = snap.data();
+    const rows = Array.isArray(b.rows) ? b.rows : [];
+    let html = `<strong>📅 ${b._date || backupId}</strong><br><small>${formatTs(b._backedAt)}</small><br><br>`;
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<tr style="background:#2c5f2d;color:white;"><th style="padding:4px 6px;text-align:left;">განყ.</th><th>საწყ.</th><th>შემ.</th><th>გაწ.</th><th>გად.</th><th>ლეტ.</th><th>საბ.</th></tr>';
+    rows.forEach(r => {
+      if (!r.dept) return;
+      const fin = (+r.initial||0)+(+r.admission||0)-(+r.discharge||0)-(+r.transfer||0)-(+r.mortality||0);
+      const hasData = r.admission||r.discharge||r.transfer||r.mortality;
+      html += `<tr style="${hasData?'background:#fffbe6':''}"><td style="padding:3px 6px;border:1px solid #eee;">${r.dept}</td><td style="border:1px solid #eee;text-align:center;">${r.initial||0}</td><td style="border:1px solid #eee;text-align:center;">${r.admission||0}</td><td style="border:1px solid #eee;text-align:center;">${r.discharge||0}</td><td style="border:1px solid #eee;text-align:center;">${r.transfer||0}</td><td style="border:1px solid #eee;text-align:center;">${r.mortality||0}</td><td style="border:1px solid #eee;text-align:center;font-weight:bold;">${fin}</td></tr>`;
+    });
+    html += '</table>';
+    if (b.responsible) html += `<br><strong>მორიგე:</strong> ${b.responsible}`;
+    if (b.urgent)      html += `<br><strong>ოპერაციები:</strong> ${b.urgent}`;
+    document.getElementById('backupPreviewContent').innerHTML = html;
+    const m = document.getElementById('backupPreviewModal'); m.classList.add('show'); m.setAttribute('aria-hidden','false');
+  } catch(e) { showToast('ვერ ჩაიტვირთა: '+e.message); }
+}
+
+async function restoreBackup(backupId) {
+  if (!db || !isAdmin) return;
+  if (!confirm('ნამდვილად გსურთ ამ ბექაფიდან მონაცემების აღდგენა? მიმდინარე მონაცემები გადაიწერება.')) return;
+  try {
+    const snap = await db.collection('backups').doc(backupId).get();
+    if (!snap.exists) { showToast('ბექაფი ვერ მოიძებნა'); return; }
+    const b = snap.data();
+    const {_docId, _date, _label, _backedAt, ...restoreData} = b;
+    const targetDocId = _docId || backupId.split('_').slice(0,3).join('_');
+    await db.collection('dailyData').doc(targetDocId).set({
+      ...restoreData,
+      restoredAt:    firebase.firestore.FieldValue.serverTimestamp(),
+      restoredFrom:  backupId
+    });
+    showToast(`✅ "${_date||targetDocId}" — მონაცემები აღდგა`);
+    // If it's the currently displayed date, reload
+    if (targetDocId === getDocId(selectedDate)) await loadAllData();
+  } catch(e) { console.error(e); showToast('აღდგენა ვერ მოხერხდა: '+e.message); }
+}
+
+async function deleteBackup(backupId) {
+  if (!confirm('წაიშალოს ეს ბექაფი?')) return;
+  try { await db.collection('backups').doc(backupId).delete(); await renderBackups(); showToast('ბექაფი წაიშალა'); }
+  catch(e) { showToast('წაშლა ვერ მოხერხდა'); }
+}
+
+// Backup ALL days that have data (for full data export/protection)
+async function backupAllDays() {
+  if (!db || !isAdmin) return;
+  const btn = document.getElementById('backupAllBtn'); if (btn) { btn.disabled=true; btn.textContent='ინახება...'; }
+  try {
+    const snap = await db.collection('dailyData').get();
+    if (snap.empty) { showToast('მონაცემები ვერ მოიძებნა'); return; }
+    const batch_size = 5;
+    const docs = snap.docs;
+    let count = 0;
+    for (let i=0; i<docs.length; i+=batch_size) {
+      const chunk = docs.slice(i, i+batch_size);
+      await Promise.all(chunk.map(async d => {
+        const bId = `${d.id}_full_${Date.now()}`;
+        await db.collection('backups').doc(bId).set({
+          ...d.data(), _docId:d.id, _date:d.id.replace(/-/g,'.'),
+          _label:`სრული ბექაფი — ${d.id}`,
+          _backedAt:firebase.firestore.FieldValue.serverTimestamp()
+        });
+        count++;
+      }));
+    }
+    await renderBackups();
+    showToast(`✅ ${count} დღის ბექაფი შეიქმნა`);
+  } catch(e) { console.error(e); showToast('ბექაფი ვერ მოხერხდა: '+e.message); }
+  finally { if (btn) { btn.disabled=false; btn.textContent='ყველა დღის ბექაფი'; } }
+}
+
+// ==========================================================
+// LOCK BUTTON
 // ==========================================================
 function updateLockButton() {
   const btn    = document.getElementById('adminButton');
   const passBtn= document.getElementById('changePasswordBtn');
   const panel  = document.getElementById('adminPanel');
   if (!isAdmin) {
-    if (btn)    btn.style.display    = 'none';
-    if (passBtn) passBtn.style.display = 'none';
-    if (panel)  panel.style.display  = 'none';
-    return;
+    if (btn) btn.style.display='none'; if (passBtn) passBtn.style.display='none';
+    if (panel) panel.style.display='none'; return;
   }
-  if (btn)    { btn.style.display = 'inline-block'; btn.textContent = isLocked ? 'განბლოკვა' : 'დაბლოკვა'; }
-  if (passBtn)  passBtn.style.display  = 'inline-block';
-  if (panel)    panel.style.display    = 'block';
+  if (btn)  { btn.style.display='inline-block'; btn.textContent=isLocked?'განბლოკვა':'დაბლოკვა'; }
+  if (passBtn) passBtn.style.display='inline-block';
+  if (panel)   panel.style.display='block';
 }
-
 function setTextareasDisabled() {
   const d = !canWriteNow();
   document.getElementById('responsiblePerson').disabled = d;
   document.getElementById('urgentOperations').disabled  = d;
 }
-
 async function toggleLock() {
   if (!isAdmin) return;
   await commitOpenEditorAndSave();
-  isLocked = !isLocked;
-  updateLockButton(); setTextareasDisabled(); renderTable();
+  isLocked = !isLocked; updateLockButton(); setTextareasDisabled(); renderTable();
   await flushPendingSaveNow();
   showToast(isLocked ? 'დღე დაიბლოკა' : 'დღე განიბლოკა');
 }
@@ -713,21 +758,19 @@ async function toggleLock() {
 // ==========================================================
 function commitOpenEditorToState() {
   const input = document.querySelector('#tableBody input');
-  if (!input) { isCurrentlyEditing = false; currentEditingCell = null; return false; }
-  const td = input.closest('td');
-  if (!td)   { isCurrentlyEditing = false; currentEditingCell = null; return false; }
-  const dept  = safeDeptKey(td.dataset.dept);
-  const field = td.dataset.field;
-  if (!dept || !field) { isCurrentlyEditing = false; currentEditingCell = null; return false; }
-  const base = dataByDept.get(dept) || { initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false };
-  const val  = Math.max(0, parseInt(input.value,10) || 0);
-  const next = { ...base, [field]: val };
-  if (field === 'initial' && isAdmin) next.initialEdited = true;
+  if (!input) { isCurrentlyEditing=false; currentEditingCell=null; return false; }
+  const td = input.closest('td'); if (!td) { isCurrentlyEditing=false; currentEditingCell=null; return false; }
+  const dept=safeDeptKey(td.dataset.dept), field=td.dataset.field;
+  if (!dept||!field) { isCurrentlyEditing=false; currentEditingCell=null; return false; }
+  const base = dataByDept.get(dept)||{initial:0,admission:0,discharge:0,transfer:0,mortality:0,initialEdited:false};
+  const val  = Math.max(0, parseInt(input.value,10)||0);
+  const next = {...base,[field]:val};
+  if (field==='initial'&&isAdmin) next.initialEdited=true;
   dataByDept.set(dept, next);
-  isCurrentlyEditing = false; currentEditingCell = null;
+  unsavedLocalChanges = true;  // ► mark dirty
+  isCurrentlyEditing=false; currentEditingCell=null;
   renderTable(); return true;
 }
-
 async function commitOpenEditorAndSave() {
   const changed = commitOpenEditorToState();
   if (changed || hasDirtyExtraFields() || !!saveTimeout) await flushPendingSaveNow();
@@ -741,97 +784,150 @@ async function readDayDoc(dateObj) {
   try {
     const snap = await db.collection('dailyData').doc(getDocId(dateObj)).get();
     return snap.exists ? snap.data() : null;
-  } catch(e) { console.error('Read error:', e); return null; }
+  } catch(e) { console.error('Read error:',e); return null; }
 }
 
 function normalizeRowsFromDoc(docData) {
   const rows = Array.isArray(docData?.rows) ? docData.rows : [];
   return rows.map(r => ({
-    dept: safeDeptKey(r.dept), initial: +r.initial||0, admission: +r.admission||0,
-    discharge: +r.discharge||0, transfer: +r.transfer||0, mortality: +r.mortality||0,
-    initialEdited: !!r.initialEdited
+    dept:safeDeptKey(r.dept), initial:+r.initial||0, admission:+r.admission||0,
+    discharge:+r.discharge||0, transfer:+r.transfer||0, mortality:+r.mortality||0, initialEdited:!!r.initialEdited
   })).filter(r => r.dept);
 }
 
 function exportPayloadForSave() {
   const rows = deptOrder.map(dept => {
-    const v = dataByDept.get(dept) || {};
-    return { dept, initial:+v.initial||0, admission:+v.admission||0, discharge:+v.discharge||0, transfer:+v.transfer||0, mortality:+v.mortality||0, initialEdited:!!v.initialEdited };
+    const v = dataByDept.get(dept)||{};
+    return {dept, initial:+v.initial||0, admission:+v.admission||0, discharge:+v.discharge||0,
+            transfer:+v.transfer||0, mortality:+v.mortality||0, initialEdited:!!v.initialEdited};
   });
-  return { rows, responsible: getExtraFieldValue('responsiblePerson'), urgent: getExtraFieldValue('urgentOperations'), locked: !!isLocked };
+  return { rows, responsible:getExtraFieldValue('responsiblePerson'), urgent:getExtraFieldValue('urgentOperations'), locked:!!isLocked };
 }
 
 // ==========================================================
-// SAVE — with department-merge protection
+// ██████████████  SAVE (CRITICAL)  ██████████████
 // ==========================================================
 async function saveAllData() {
-  if (!db || !canWriteNow()) return;
+  if (!db) return;
+
+  // Dept users: can save even if locked (their own data)
+  // Admin: always can save
+  if (!isAdmin && isLocked) {
+    console.warn('Save blocked: day is locked');
+    return;
+  }
+
   const docId   = getDocId(selectedDate);
   const payload = exportPayloadForSave();
-  const respDirty  = !!extraFieldState.responsiblePerson?.dirty;
-  const urgDirty   = !!extraFieldState.urgentOperations?.dirty;
+  const respDirty = !!extraFieldState.responsiblePerson?.dirty;
+  const urgDirty  = !!extraFieldState.urgentOperations?.dirty;
+
   setSaveIndicator('ინახება...');
-  try {
-    const existingSnap = await db.collection('dailyData').doc(docId).get();
-    let finalResponsible = payload.responsible;
-    let finalUrgent      = payload.urgent;
-    let finalRows        = payload.rows;
 
-    if (existingSnap.exists) {
-      const existing = existingSnap.data() || {};
+  let retries = 2;
+  while (retries-- > 0) {
+    try {
+      // ── Use Firestore TRANSACTION for safe concurrent writes ──
+      let savedPayload = null;
 
-      // Never replace a non-empty field with empty unless user explicitly cleared it
-      if (existing.responsible && !payload.responsible && !respDirty) finalResponsible = existing.responsible;
-      if (existing.urgent      && !payload.urgent      && !urgDirty)  finalUrgent      = existing.urgent;
+      await db.runTransaction(async transaction => {
+        const docRef = db.collection('dailyData').doc(docId);
+        const existingSnap = await transaction.get(docRef);
 
-      // Department users: merge — only update their own rows, keep others from DB
-      if (!isAdmin && currentUser?.role === 'department_user') {
-        const allowed      = new Set(currentUser.allowedDepartments || []);
-        const existingRows = normalizeRowsFromDoc(existing);
-        const existingMap  = new Map(existingRows.map(r => [r.dept, r]));
-        finalRows = deptOrder.map(dept => {
-          if (allowed.has(dept)) return payload.rows.find(r => r.dept === dept) || existingMap.get(dept) || { dept, initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false };
-          return existingMap.get(dept) || { dept, initial:0, admission:0, discharge:0, transfer:0, mortality:0, initialEdited:false };
-        });
+        let finalRows        = payload.rows;
+        let finalResponsible = payload.responsible;
+        let finalUrgent      = payload.urgent;
+
+        if (existingSnap.exists) {
+          const existing = existingSnap.data() || {};
+          const existingRows = normalizeRowsFromDoc(existing);
+          const existingMap  = new Map(existingRows.map(r => [r.dept, r]));
+
+          // ── Never wipe non-empty text fields with empty value ──
+          if (existing.responsible && !payload.responsible && !respDirty) finalResponsible = existing.responsible;
+          if (existing.urgent      && !payload.urgent      && !urgDirty)  finalUrgent      = existing.urgent;
+
+          // ── Department user: only update their own rows ──
+          if (!isAdmin && currentUser?.role === 'department_user') {
+            const allowed = new Set(currentUser.allowedDepartments || []);
+            finalRows = deptOrder.map(dept => {
+              if (allowed.has(dept)) {
+                // Use local edited value for this dept
+                return payload.rows.find(r => r.dept === dept)
+                    || existingMap.get(dept)
+                    || {dept,initial:0,admission:0,discharge:0,transfer:0,mortality:0,initialEdited:false};
+              }
+              // Keep existing value for other depts
+              return existingMap.get(dept)
+                  || {dept,initial:0,admission:0,discharge:0,transfer:0,mortality:0,initialEdited:false};
+            });
+          }
+        } else if (!isAdmin && currentUser?.role === 'department_user') {
+          // New document, dept user writing: set their depts, zero others
+          const allowed = new Set(currentUser.allowedDepartments || []);
+          finalRows = deptOrder.map(dept => {
+            if (allowed.has(dept)) return payload.rows.find(r=>r.dept===dept)||{dept,initial:0,admission:0,discharge:0,transfer:0,mortality:0,initialEdited:false};
+            return {dept,initial:0,admission:0,discharge:0,transfer:0,mortality:0,initialEdited:false};
+          });
+        }
+
+        savedPayload = {
+          rows:        finalRows,
+          responsible: finalResponsible,
+          urgent:      finalUrgent,
+          locked:      payload.locked,
+          updatedAt:   firebase.firestore.FieldValue.serverTimestamp()
+        };
+        transaction.set(docRef, savedPayload, {merge:true});
+      });
+
+      // ── Success ──
+      setSaveIndicator('შენახულია ✓');
+      unsavedLocalChanges = false;  // ► clear dirty flag
+      syncExtraFieldAfterSave('responsiblePerson', savedPayload?.responsible);
+      syncExtraFieldAfterSave('urgentOperations',  savedPayload?.urgent);
+
+      // Auto-backup on every admin save
+      if (isAdmin && savedPayload) {
+        autoBackup(docId, savedPayload).catch(()=>{});
+      }
+
+      console.log('✅ Saved + backed up:', docId);
+      return; // done
+
+    } catch(e) {
+      if (retries > 0) {
+        console.warn('⚠️ Save retry:', e.message);
+        await new Promise(r => setTimeout(r, 600));
+      } else {
+        console.error('❌ Save failed:', e);
+        setSaveIndicator('შეცდომა ✗');
+        showToast('შენახვა ვერ მოხერხდა — გთხოვთ სცადოთ ხელახლა');
       }
     }
-
-    await db.collection('dailyData').doc(docId).set({
-      rows: finalRows, responsible: finalResponsible, urgent: finalUrgent,
-      locked: payload.locked, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-
-    setSaveIndicator('შენახულია ✓');
-    syncExtraFieldAfterSave('responsiblePerson', finalResponsible);
-    syncExtraFieldAfterSave('urgentOperations',  finalUrgent);
-    console.log('✅ Saved:', docId);
-  } catch(e) {
-    console.error('❌ Save error:', e);
-    setSaveIndicator('შეცდომა ✗');
-    showToast('შენახვა ვერ მოხერხდა');
   }
 }
 
 function enqueueSaveNow() {
-  if (!db || !canWriteNow()) return Promise.resolve();
+  if (!db) return Promise.resolve();
   if (saveTimeout) clearTimeout(saveTimeout);
   return new Promise(resolve => {
     saveTimeout = setTimeout(() => {
       saveTimeout = null;
-      saveChain = saveChain.then(() => saveAllData()).then(resolve).catch(err => { console.error('Save chain error:', err); resolve(); });
+      saveChain = saveChain.then(()=>saveAllData()).then(resolve).catch(err=>{console.error(err);resolve();});
     }, 800);
   });
 }
 
 function flushPendingSaveNow() {
-  if (!db || !canWriteNow()) return Promise.resolve();
-  if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null; }
-  saveChain = saveChain.then(() => saveAllData()).catch(err => { console.error('Flush save error:', err); });
+  if (!db) return Promise.resolve();
+  if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout=null; }
+  saveChain = saveChain.then(()=>saveAllData()).catch(err=>{console.error('Flush save:',err);});
   return saveChain;
 }
 
 // ==========================================================
-// LIVE LISTENER
+// ██████████████  LIVE LISTENER (RACE-CONDITION FIX)  ██████████████
 // ==========================================================
 function detachLiveListener() {
   if (typeof unsubscribeDay === 'function') { try { unsubscribeDay(); } catch(e) {} }
@@ -845,69 +941,86 @@ function attachLiveListener() {
     { includeMetadataChanges: true },
     snap => {
       if (!snap.exists) return;
-      const d = snap.data() || {};
-      const pending   = !!snap.metadata.hasPendingWrites;
-      const fromCache = !!snap.metadata.fromCache;
-      setFbStatus(true, pending ? "Firebase: ინახება..." : (fromCache ? "Firebase: ქეშიდან" : "Firebase: სინქრონიზებულია ✓"));
+      const d       = snap.data() || {};
+      const pending = !!snap.metadata.hasPendingWrites;
+      const cache   = !!snap.metadata.fromCache;
+
+      setFbStatus(true, pending ? "Firebase: ინახება..." : (cache ? "Firebase: ქეშიდან" : "Firebase: სინქრონიზებულია ✓"));
       if (!pending) setSaveIndicator('შენახულია ✓');
-      if (isCurrentlyEditing || document.querySelector('#tableBody input') || pending) return;
+
+      // ► CRITICAL: don't overwrite local unsaved changes
+      if (isCurrentlyEditing
+       || document.querySelector('#tableBody input')
+       || pending
+       || unsavedLocalChanges          // cells edited but not yet saved
+       || hasDirtyExtraFields())       // textareas edited but not yet saved
+      {
+        console.log('🛡️ Listener skipped: local changes pending');
+        return;
+      }
+
+      console.log('📥 Applying remote data');
       applyDayDocToState(d);
     },
-    err => { console.error("Listener error:", err); setFbStatus(false, "Firebase: შეცდომა ✗"); }
+    err => { console.error("Listener error:", err); setFbStatus(false,"Firebase: შეცდომა ✗"); }
   );
 }
 
 function applyDayDocToState(doc) {
   const rows = normalizeRowsFromDoc(doc);
-  const map  = new Map(); rows.forEach(r => map.set(r.dept, r));
+  const map  = new Map(); rows.forEach(r => map.set(r.dept,r));
   const next = new Map();
   deptOrder.forEach(dept => {
     const r = map.get(dept);
-    next.set(dept, { initial:r?r.initial:0, admission:r?r.admission:0, discharge:r?r.discharge:0, transfer:r?r.transfer:0, mortality:r?r.mortality:0, initialEdited:r?!!r.initialEdited:false });
+    next.set(dept, {initial:r?r.initial:0,admission:r?r.admission:0,discharge:r?r.discharge:0,
+                    transfer:r?r.transfer:0,mortality:r?r.mortality:0,initialEdited:r?!!r.initialEdited:false});
   });
-  dataByDept = next;
-  isLocked   = !!doc?.locked;
-  setExtraFieldValue('responsiblePerson', doc?.responsible || '');
-  setExtraFieldValue('urgentOperations',  doc?.urgent      || '');
+  dataByDept = next; isLocked = !!doc?.locked;
+  setExtraFieldValue('responsiblePerson', doc?.responsible||'');
+  setExtraFieldValue('urgentOperations',  doc?.urgent||'');
   updateLockButton(); setTextareasDisabled(); renderTable();
 }
 
 function buildStateFromPrevAndToday(prevDoc, todayDoc) {
-  const prevRows = normalizeRowsFromDoc(prevDoc);
-  const todayRows= normalizeRowsFromDoc(todayDoc);
-  const prevFinal= new Map(); prevRows.forEach(r => prevFinal.set(r.dept, computeFinal(r)));
-  const todayMap = new Map(); todayRows.forEach(r => todayMap.set(r.dept, r));
+  const prevRows  = normalizeRowsFromDoc(prevDoc);
+  const todayRows = normalizeRowsFromDoc(todayDoc);
+  const prevFinal = new Map(); prevRows.forEach(r => prevFinal.set(r.dept, computeFinal(r)));
+  const todayMap  = new Map(); todayRows.forEach(r => todayMap.set(r.dept,r));
   const next = new Map();
   deptOrder.forEach(dept => {
     const saved = todayMap.get(dept);
-    let initialVal = 0, initialEdited = false;
-    if (saved?.initialEdited)      { initialVal = saved.initial; initialEdited = true; }
-    else if (prevFinal.has(dept))  { initialVal = prevFinal.get(dept) || 0; }
-    else                           { initialVal = saved ? saved.initial : 0; initialEdited = saved ? !!saved.initialEdited : false; }
-    next.set(dept, { initial:initialVal, admission:saved?saved.admission:0, discharge:saved?saved.discharge:0, transfer:saved?saved.transfer:0, mortality:saved?saved.mortality:0, initialEdited });
+    let initialVal=0, initialEdited=false;
+    if (saved?.initialEdited)     { initialVal=saved.initial; initialEdited=true; }
+    else if (prevFinal.has(dept)) { initialVal=prevFinal.get(dept)||0; }
+    else                          { initialVal=saved?saved.initial:0; initialEdited=saved?!!saved.initialEdited:false; }
+    next.set(dept,{initial:initialVal,admission:saved?saved.admission:0,discharge:saved?saved.discharge:0,
+                   transfer:saved?saved.transfer:0,mortality:saved?saved.mortality:0,initialEdited});
   });
-  dataByDept = next;
-  isLocked   = !!todayDoc?.locked;
-  setExtraFieldValue('responsiblePerson', todayDoc?.responsible || '', { force: true });
-  setExtraFieldValue('urgentOperations',  todayDoc?.urgent      || '', { force: true });
+  dataByDept=next; isLocked=!!todayDoc?.locked;
+  setExtraFieldValue('responsiblePerson',todayDoc?.responsible||'',{force:true});
+  setExtraFieldValue('urgentOperations', todayDoc?.urgent||'',{force:true});
+  unsavedLocalChanges=false;  // freshly loaded = no unsaved changes
   updateLockButton(); setTextareasDisabled(); renderTable();
 }
 
 async function loadAllData() {
   if (!db) return;
   document.getElementById('selectedDate').textContent = formatDate(selectedDate);
-  showOverlay(true); setSaveIndicator('—');
+  showOverlay(true); setSaveIndicator('—'); unsavedLocalChanges=false;
   try {
     attachLiveListener();
     const [prevDoc, todayDoc] = await Promise.all([readDayDoc(dateMinusOneDay(selectedDate)), readDayDoc(selectedDate)]);
     buildStateFromPrevAndToday(prevDoc, todayDoc);
-    if (!todayDoc) await saveAllData();
+    if (!todayDoc) {
+      console.log('💾 New day — creating document');
+      await saveAllData();
+    }
     if (isAdmin) {
-      const m = selectedDate.getMonth(), y = selectedDate.getFullYear();
-      setStatsSelectors(m, y); await computeMonthlyStats(y, m);
+      const m=selectedDate.getMonth(), y=selectedDate.getFullYear();
+      setStatsSelectors(m,y); await computeMonthlyStats(y,m);
     }
   } catch(e) {
-    console.error('❌ Load error:', e); showToast('ჩატვირთვა ვერ მოხერხდა');
+    console.error('❌ Load error:',e); showToast('ჩატვირთვა ვერ მოხერხდა');
   } finally { showOverlay(false); }
 }
 
@@ -918,27 +1031,27 @@ function renderTable() {
   const tbody = document.getElementById('tableBody');
   tbody.innerHTML = '';
   for (const dept of deptOrder) {
-    const v     = dataByDept.get(dept) || { initial:0, admission:0, discharge:0, transfer:0, mortality:0 };
+    const v     = dataByDept.get(dept)||{initial:0,admission:0,discharge:0,transfer:0,mortality:0};
     const final = computeFinal(v);
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${dept}</td>
-      <td class="${canEditCell('initial',dept)   ? 'editable':''}" data-dept="${dept}" data-field="initial">${v.initial}</td>
-      <td class="${canEditCell('admission',dept) ? 'editable':''}" data-dept="${dept}" data-field="admission">${v.admission}</td>
-      <td class="${canEditCell('discharge',dept) ? 'editable':''}" data-dept="${dept}" data-field="discharge">${v.discharge}</td>
-      <td class="${canEditCell('transfer',dept)  ? 'editable':''}" data-dept="${dept}" data-field="transfer">${v.transfer}</td>
-      <td class="${canEditCell('mortality',dept) ? 'editable':''}" data-dept="${dept}" data-field="mortality">${v.mortality}</td>
+      <td class="${canEditCell('initial',dept)   ?'editable':''}" data-dept="${dept}" data-field="initial">${v.initial}</td>
+      <td class="${canEditCell('admission',dept) ?'editable':''}" data-dept="${dept}" data-field="admission">${v.admission}</td>
+      <td class="${canEditCell('discharge',dept) ?'editable':''}" data-dept="${dept}" data-field="discharge">${v.discharge}</td>
+      <td class="${canEditCell('transfer',dept)  ?'editable':''}" data-dept="${dept}" data-field="transfer">${v.transfer}</td>
+      <td class="${canEditCell('mortality',dept) ?'editable':''}" data-dept="${dept}" data-field="mortality">${v.mortality}</td>
       <td>${final}</td>`;
     tbody.appendChild(tr);
   }
-  const totals = deptOrder.reduce((a, dept) => {
-    const v = dataByDept.get(dept) || {};
+  const totals = deptOrder.reduce((a,dept) => {
+    const v=dataByDept.get(dept)||{};
     a.initial+=v.initial||0; a.admission+=v.admission||0; a.discharge+=v.discharge||0;
     a.transfer+=v.transfer||0; a.mortality+=v.mortality||0; a.final+=computeFinal(v); return a;
-  }, { initial:0, admission:0, discharge:0, transfer:0, mortality:0, final:0 });
+  },{initial:0,admission:0,discharge:0,transfer:0,mortality:0,final:0});
   const totalRow = document.createElement('tr');
-  totalRow.className = 'total-row';
-  totalRow.innerHTML = `<td>სულ</td><td>${totals.initial}</td><td>${totals.admission}</td><td>${totals.discharge}</td><td>${totals.transfer}</td><td>${totals.mortality}</td><td>${totals.final}</td>`;
+  totalRow.className='total-row';
+  totalRow.innerHTML=`<td>სულ</td><td>${totals.initial}</td><td>${totals.admission}</td><td>${totals.discharge}</td><td>${totals.transfer}</td><td>${totals.mortality}</td><td>${totals.final}</td>`;
   tbody.appendChild(totalRow);
 }
 
@@ -952,31 +1065,38 @@ function setupTableEditing() {
     if (!cell || !cell.classList.contains('editable')) return;
     if (isCurrentlyEditing && currentEditingCell !== cell) await commitOpenEditorAndSave();
     if (cell.querySelector('input')) return;
-    const dept  = safeDeptKey(cell.dataset.dept);
-    const field = cell.dataset.field;
-    if (!dept || !field || !canEditCell(field, dept)) {
-      if (dept && !canWriteDept(dept)) showToast('თქვენ არ გაქვთ ამ განყოფილების მონაცემების შეცვლის უფლება');
+    const dept=safeDeptKey(cell.dataset.dept), field=cell.dataset.field;
+    if (!dept||!field||!canEditCell(field,dept)) {
+      if (dept && !canWriteDept(dept)) showToast('თქვენ არ გაქვთ ამ განყოფილების შეცვლის უფლება');
       return;
     }
-    const base  = dataByDept.get(dept) || { initial:0, admission:0, discharge:0, transfer:0, mortality:0 };
+    const base  = dataByDept.get(dept)||{initial:0,admission:0,discharge:0,transfer:0,mortality:0};
     const input = document.createElement('input');
-    input.type = 'number'; input.min = '0'; input.value = base[field] || 0;
-    cell.textContent = ''; cell.appendChild(input);
-    isCurrentlyEditing = true; currentEditingCell = cell;
+    input.type='number'; input.min='0'; input.value=base[field]||0;
+    cell.textContent=''; cell.appendChild(input);
+    isCurrentlyEditing=true; currentEditingCell=cell;
     input.focus(); input.select();
+
     const commit = async () => {
-      const val    = Math.max(0, parseInt(input.value,10) || 0);
-      const latest = dataByDept.get(dept) || { initial:0, admission:0, discharge:0, transfer:0, mortality:0 };
-      const next   = { ...latest, [field]: val };
-      if (field === 'initial' && isAdmin) next.initialEdited = true;
-      dataByDept.set(dept, next);
-      isCurrentlyEditing = false; currentEditingCell = null;
-      renderTable(); await flushPendingSaveNow();
+      const val    = Math.max(0,parseInt(input.value,10)||0);
+      const latest = dataByDept.get(dept)||{initial:0,admission:0,discharge:0,transfer:0,mortality:0};
+      const next   = {...latest,[field]:val};
+      if (field==='initial'&&isAdmin) next.initialEdited=true;
+      dataByDept.set(dept,next);
+      unsavedLocalChanges = true;  // ► mark: we have data not yet in Firestore
+      isCurrentlyEditing=false; currentEditingCell=null;
+      renderTable();
+      try {
+        await flushPendingSaveNow();  // save to Firestore
+      } finally {
+        // unsavedLocalChanges cleared inside saveAllData() on success
+      }
     };
-    input.addEventListener('blur',    commit, { once: true });
+
+    input.addEventListener('blur',commit,{once:true});
     input.addEventListener('keydown', ev => {
-      if (ev.key === 'Enter')  { ev.preventDefault(); commit(); }
-      if (ev.key === 'Escape') { isCurrentlyEditing = false; currentEditingCell = null; renderTable(); }
+      if (ev.key==='Enter')  { ev.preventDefault(); commit(); }
+      if (ev.key==='Escape') { isCurrentlyEditing=false; currentEditingCell=null; renderTable(); }
     });
   });
   document.addEventListener('mousedown', async e => {
@@ -1005,88 +1125,77 @@ function setupExtraFields() {
 // ==========================================================
 // CALENDAR
 // ==========================================================
-const monthNames = ['იანვარი','თებერვალი','მარტი','აპრილი','მაისი','ივნისი','ივლისი','აგვისტო','სექტემბერი','ოქტომბერი','ნოემბერი','დეკემბერი'];
+const monthNames = ['იანვარი','თებერვალი','მარტი','აპრილი','მაისი','ივნისი',
+                    'ივლისი','აგვისტო','სექტემბერი','ოქტომბერი','ნოემბერი','დეკემბერი'];
 
 function renderCalendar(year) {
   document.getElementById('calendarTitle').textContent = `${year} წლის კალენდარი`;
   const container = document.getElementById('calendarContainer');
-  container.innerHTML = '';
+  container.innerHTML='';
   const today = new Date();
-  for (let m = 0; m < 12; m++) {
-    const div = document.createElement('div'); div.className = 'month';
-    div.innerHTML = `<h3>${monthNames[m]} ${year}</h3>`;
-    const table = document.createElement('table');
-    const thead = document.createElement('thead');
-    const headRow = document.createElement('tr');
-    ['კვი','ორშ','სამ','ოთხ','ხუთ','პარ','შაბ'].forEach(d => {
-      const th = document.createElement('th'); th.textContent = d; headRow.appendChild(th);
-    });
+  for (let m=0; m<12; m++) {
+    const div=document.createElement('div'); div.className='month';
+    div.innerHTML=`<h3>${monthNames[m]} ${year}</h3>`;
+    const table=document.createElement('table');
+    const thead=document.createElement('thead');
+    const headRow=document.createElement('tr');
+    ['კვი','ორშ','სამ','ოთხ','ხუთ','პარ','შაბ'].forEach(d=>{const th=document.createElement('th');th.textContent=d;headRow.appendChild(th);});
     thead.appendChild(headRow); table.appendChild(thead);
-    const tbody = document.createElement('tbody');
-    let firstDay = new Date(year, m, 1).getDay();
-    firstDay = firstDay === 0 ? 7 : firstDay;
-    const daysInMonth = new Date(year, m+1, 0).getDate();
-    let day = 1;
-    for (let r = 0; r < 6; r++) {
-      const tr = document.createElement('tr');
-      for (let c = 1; c <= 7; c++) {
-        const td = document.createElement('td');
-        if ((r === 0 && c < firstDay) || day > daysInMonth) {
-          td.className = 'empty';
-        } else {
-          const clickDay = day; td.textContent = day;
-          if (year === today.getFullYear() && m === today.getMonth() && day === today.getDate()) td.classList.add('today');
-          td.addEventListener('click', async () => {
+    const tbody=document.createElement('tbody');
+    let firstDay=new Date(year,m,1).getDay(); firstDay=firstDay===0?7:firstDay;
+    const daysInMonth=new Date(year,m+1,0).getDate(); let day=1;
+    for (let r=0;r<6;r++) {
+      const tr=document.createElement('tr');
+      for (let c=1;c<=7;c++) {
+        const td=document.createElement('td');
+        if ((r===0&&c<firstDay)||day>daysInMonth) { td.className='empty'; }
+        else {
+          const clickDay=day; td.textContent=day;
+          if (year===today.getFullYear()&&m===today.getMonth()&&day===today.getDate()) td.classList.add('today');
+          td.addEventListener('click',async()=>{
             await commitOpenEditorAndSave();
-            selectedDate = new Date(year, m, clickDay);
-            setView('table'); await loadAllData();
+            selectedDate=new Date(year,m,clickDay); setView('table'); await loadAllData();
           });
           day++;
         }
         tr.appendChild(td);
       }
-      tbody.appendChild(tr);
-      if (day > daysInMonth) break;
+      tbody.appendChild(tr); if (day>daysInMonth) break;
     }
     table.appendChild(tbody); div.appendChild(table); container.appendChild(div);
   }
 }
 
 // ==========================================================
-// ADMIN MONTHLY STATISTICS
+// ADMIN STATS
 // ==========================================================
 function setStatsSelectors(month, year) {
-  const mSel = document.getElementById('statsMonth');
-  const ySel = document.getElementById('statsYear');
-  if (mSel && mSel.options.length === 0) monthNames.forEach((n,i) => { const o = document.createElement('option'); o.value=i; o.textContent=n; mSel.appendChild(o); });
-  if (ySel && ySel.options.length === 0) { const base = new Date().getFullYear(); for (let y=base-3;y<=base+3;y++) { const o=document.createElement('option'); o.value=y; o.textContent=y; ySel.appendChild(o); } }
-  if (mSel) mSel.value = month;
-  if (ySel) ySel.value = year;
+  const mSel=document.getElementById('statsMonth'), ySel=document.getElementById('statsYear');
+  if (mSel&&mSel.options.length===0) monthNames.forEach((n,i)=>{const o=document.createElement('option');o.value=i;o.textContent=n;mSel.appendChild(o);});
+  if (ySel&&ySel.options.length===0){const base=new Date().getFullYear();for(let y=base-3;y<=base+3;y++){const o=document.createElement('option');o.value=y;o.textContent=y;ySel.appendChild(o);}}
+  if (mSel) mSel.value=month; if (ySel) ySel.value=year;
 }
-
 async function computeMonthlyStats(year, month) {
   if (!db) return;
-  const days = new Date(year, month+1, 0).getDate();
-  let adm = 0, dis = 0, mor = 0;
-  const ids = [];
-  for (let d = 1; d <= days; d++) ids.push(getDocId(new Date(year, month, d)));
-  for (let i = 0; i < ids.length; i += 10) {
-    const chunk = ids.slice(i, i+10);
-    const snaps = await Promise.all(chunk.map(id => db.collection('dailyData').doc(id).get().catch(() => null)));
-    snaps.forEach(snap => {
-      if (!snap || !snap.exists) return;
-      (snap.data().rows || []).forEach(r => {
-        const dept = safeDeptKey(r.dept);
-        if (ADMISSION_DEPTS_ONLY.has(dept)) adm += +r.admission||0;
-        dis += +r.discharge||0; mor += +r.mortality||0;
+  const days=new Date(year,month+1,0).getDate(); let adm=0,dis=0,mor=0;
+  const ids=[]; for(let d=1;d<=days;d++) ids.push(getDocId(new Date(year,month,d)));
+  for(let i=0;i<ids.length;i+=10){
+    const chunk=ids.slice(i,i+10);
+    const snaps=await Promise.all(chunk.map(id=>db.collection('dailyData').doc(id).get().catch(()=>null)));
+    snaps.forEach(snap=>{
+      if(!snap||!snap.exists)return;
+      (snap.data().rows||[]).forEach(r=>{
+        const dept=safeDeptKey(r.dept);
+        if(ADMISSION_DEPTS_ONLY.has(dept)) adm+=+r.admission||0;
+        dis+=+r.discharge||0; mor+=+r.mortality||0;
       });
     });
   }
-  document.getElementById('statAdmission').textContent = adm;
-  document.getElementById('statDischarge').textContent = dis;
-  document.getElementById('statMortality').textContent = mor;
-  const note = document.getElementById('statsNote');
-  if (note) note.textContent = `სტატისტიკა: ${monthNames[month]} ${year}`;
+  document.getElementById('statAdmission').textContent=adm;
+  document.getElementById('statDischarge').textContent=dis;
+  document.getElementById('statMortality').textContent=mor;
+  const note=document.getElementById('statsNote');
+  if(note) note.textContent=`სტატისტიკა: ${monthNames[month]} ${year}`;
 }
 
 // ==========================================================
@@ -1096,18 +1205,19 @@ function setupAdminTabs() {
   document.querySelectorAll('.admin-tab-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const tab = btn.dataset.tab;
-      document.querySelectorAll('.admin-tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.admin-tab-pane').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.admin-tab-btn').forEach(b=>b.classList.remove('active'));
+      document.querySelectorAll('.admin-tab-pane').forEach(p=>p.classList.remove('active'));
       btn.classList.add('active');
-      const paneId = 'tab' + tab.charAt(0).toUpperCase() + tab.slice(1);
+      const paneId = 'tab'+tab.charAt(0).toUpperCase()+tab.slice(1);
       document.getElementById(paneId).classList.add('active');
-      if (tab === 'users') await renderUserManagement();
+      if (tab==='users')   await renderUserManagement();
+      if (tab==='backups') await renderBackups();
     });
   });
 }
 
 // ==========================================================
-// MAIN SETUP
+// SETUP
 // ==========================================================
 function setupUI() {
   initFirebase();
@@ -1116,14 +1226,14 @@ function setupUI() {
 
   // Login
   document.getElementById('loginBtn').onclick = checkPassword;
-  document.getElementById('username').onkeydown = e => { if (e.key === 'Enter') document.getElementById('password').focus(); };
-  document.getElementById('password').onkeydown = e => { if (e.key === 'Enter') checkPassword(); };
+  document.getElementById('username').onkeydown = e => { if(e.key==='Enter') document.getElementById('password').focus(); };
+  document.getElementById('password').onkeydown = e => { if(e.key==='Enter') checkPassword(); };
 
   // Logout
   document.getElementById('logoutBtn').onclick    = logout;
   document.getElementById('logoutBtnCal').onclick = logout;
 
-  // Calendar navigation
+  // Calendar
   document.getElementById('prevYearBtn').onclick = () => { currentYear--; renderCalendar(currentYear); };
   document.getElementById('nextYearBtn').onclick = () => { currentYear++; renderCalendar(currentYear); };
 
@@ -1132,39 +1242,48 @@ function setupUI() {
   document.getElementById('prevDayBtn').onclick = async () => { await commitOpenEditorAndSave(); selectedDate.setDate(selectedDate.getDate()-1); await loadAllData(); };
   document.getElementById('nextDayBtn').onclick = async () => { await commitOpenEditorAndSave(); selectedDate.setDate(selectedDate.getDate()+1); await loadAllData(); };
   document.getElementById('showCalendarBtn').onclick = async () => { await commitOpenEditorAndSave(); setView('calendar'); renderCalendar(currentYear); };
-  document.getElementById('adminButton').onclick   = toggleLock;
+  document.getElementById('adminButton').onclick      = toggleLock;
   document.getElementById('changePasswordBtn').onclick = openPasswordChangeModal;
   document.getElementById('cancelPasswordChangeBtn').onclick = closePasswordChangeModal;
   document.getElementById('savePasswordChangeBtn').onclick   = changePasswordByAdminChoice;
-  document.getElementById('passwordModal').onclick = e => { if (e.target.id === 'passwordModal') closePasswordChangeModal(); };
+  document.getElementById('passwordModal').onclick = e => { if(e.target.id==='passwordModal') closePasswordChangeModal(); };
 
-  // First-login modal
+  // First-login
   document.getElementById('flSaveBtn').onclick = handleFirstLoginSave;
 
   // User management
   document.getElementById('createUserBtn').onclick  = () => openUserModal(null);
   document.getElementById('cancelUserBtn').onclick  = closeUserModal;
   document.getElementById('saveUserBtn').onclick    = saveUserFromModal;
-  document.getElementById('userModal').onclick = e => { if (e.target.id === 'userModal') closeUserModal(); };
+  document.getElementById('userModal').onclick = e => { if(e.target.id==='userModal') closeUserModal(); };
   document.getElementById('closeTempPwBtn').onclick = () => {
-    const m = document.getElementById('tempPwModal');
-    m.classList.remove('show'); m.setAttribute('aria-hidden','true');
+    const m=document.getElementById('tempPwModal'); m.classList.remove('show'); m.setAttribute('aria-hidden','true');
   };
   document.getElementById('cancelResetPwBtn').onclick = closeResetPwModal;
   document.getElementById('saveResetPwBtn').onclick   = saveResetPassword;
-  document.getElementById('resetPwModal').onclick = e => { if (e.target.id === 'resetPwModal') closeResetPwModal(); };
+  document.getElementById('resetPwModal').onclick = e => { if(e.target.id==='resetPwModal') closeResetPwModal(); };
 
-  // Admin stats
-  const refreshBtn = document.getElementById('refreshStatsBtn');
-  if (refreshBtn) refreshBtn.onclick = async () => {
-    if (!isAdmin) return;
-    await computeMonthlyStats(parseInt(document.getElementById('statsYear').value), parseInt(document.getElementById('statsMonth').value));
+  // Backup controls
+  document.getElementById('createBackupBtn').onclick = () => createBackupNow().then(()=>{ showToast('ბექაფი შეიქმნა ✓'); renderBackups(); });
+  document.getElementById('backupAllBtn').onclick    = backupAllDays;
+  document.getElementById('closeBackupPreviewBtn').onclick = () => {
+    const m=document.getElementById('backupPreviewModal'); m.classList.remove('show'); m.setAttribute('aria-hidden','true');
   };
-  ['statsMonth','statsYear'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.onchange = async () => {
-      if (!isAdmin) return;
-      await computeMonthlyStats(parseInt(document.getElementById('statsYear').value), parseInt(document.getElementById('statsMonth').value));
+  document.getElementById('backupPreviewModal').onclick = e => {
+    if(e.target.id==='backupPreviewModal'){const m=e.currentTarget;m.classList.remove('show');m.setAttribute('aria-hidden','true');}
+  };
+
+  // Stats
+  const refreshBtn=document.getElementById('refreshStatsBtn');
+  if(refreshBtn) refreshBtn.onclick = async()=>{
+    if(!isAdmin)return;
+    await computeMonthlyStats(parseInt(document.getElementById('statsYear').value),parseInt(document.getElementById('statsMonth').value));
+  };
+  ['statsMonth','statsYear'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.onchange=async()=>{
+      if(!isAdmin)return;
+      await computeMonthlyStats(parseInt(document.getElementById('statsYear').value),parseInt(document.getElementById('statsMonth').value));
     };
   });
 
@@ -1172,21 +1291,21 @@ function setupUI() {
   setupTableEditing();
   setupExtraFields();
 
-  // Page lifecycle — save before navigating away
+  // Page lifecycle
   window.onbeforeunload = () => {
-    if (isCurrentlyEditing) commitOpenEditorToState();
-    if (hasDirtyExtraFields() || saveTimeout) flushPendingSaveNow();
+    if(isCurrentlyEditing) commitOpenEditorToState();
+    if(hasDirtyExtraFields()||saveTimeout||unsavedLocalChanges) flushPendingSaveNow();
     detachLiveListener();
   };
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && (hasDirtyExtraFields() || saveTimeout || isCurrentlyEditing)) {
-      if (isCurrentlyEditing) commitOpenEditorToState();
+    if(document.visibilityState==='hidden'&&(hasDirtyExtraFields()||saveTimeout||isCurrentlyEditing||unsavedLocalChanges)){
+      if(isCurrentlyEditing) commitOpenEditorToState();
       flushPendingSaveNow();
     }
   });
   window.addEventListener('pagehide', () => {
-    if (hasDirtyExtraFields() || saveTimeout || isCurrentlyEditing) {
-      if (isCurrentlyEditing) commitOpenEditorToState();
+    if(hasDirtyExtraFields()||saveTimeout||isCurrentlyEditing||unsavedLocalChanges){
+      if(isCurrentlyEditing) commitOpenEditorToState();
       flushPendingSaveNow();
     }
   });
